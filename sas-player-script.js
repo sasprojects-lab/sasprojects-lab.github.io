@@ -29,6 +29,7 @@ let videoLinks = [
     let dragFromIndex = -1;
     let isLightMode = false;
     let isThemeAnimating = false;
+    let shouldResumeOnFocus = false;
     const disk = document.getElementById('spinning-disk');
     const playPauseBtn = document.getElementById('play-pause-btn');
     const playPauseIcon = playPauseBtn.querySelector('i');
@@ -81,7 +82,9 @@ let videoLinks = [
         playerVars: {
           'autoplay': 0,
           'controls': 1,
-          'rel': 0
+          'rel': 0,
+          'playsinline': 1,
+          'enablejsapi': 1
         },
         events: {
           'onStateChange': onPlayerStateChange
@@ -167,6 +170,34 @@ let videoLinks = [
         playNext();
       }
     }
+
+    document.addEventListener('visibilitychange', () => {
+      if (!player || !player.getPlayerState) return;
+
+      if (document.hidden) {
+        shouldResumeOnFocus = player.getPlayerState() === YT.PlayerState.PLAYING;
+        return;
+      }
+
+      if (shouldResumeOnFocus) {
+        player.playVideo();
+      }
+      shouldResumeOnFocus = false;
+    });
+
+    window.addEventListener('pageshow', () => {
+      if (shouldResumeOnFocus && player && player.playVideo) {
+        player.playVideo();
+        shouldResumeOnFocus = false;
+      }
+    });
+
+    window.addEventListener('focus', () => {
+      if (shouldResumeOnFocus && player && player.playVideo) {
+        player.playVideo();
+        shouldResumeOnFocus = false;
+      }
+    });
 
     function playNext() {
       if (usingYouTubePlaylist) {
