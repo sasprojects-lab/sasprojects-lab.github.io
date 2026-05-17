@@ -521,8 +521,8 @@
       position: absolute;
       top: -10px;
       right: 0;
-      width: 175px;
-      height: 175px;
+      width: 153px;
+      height: 153px;
       background: var(--bg-main);
       border-bottom-left-radius: 50%;
       z-index: 2;
@@ -715,7 +715,7 @@
       }
 
       .sidebar-header {
-        width: calc(100% - 140px);
+        width: calc(100% - 195px);
       }
 
       #track-list {
@@ -723,13 +723,13 @@
       }
 
       .disk-container {
-        width: 120px;
-        height: 120px;
+        width: 130px;
+        height: 123px;
       }
 
       .disk {
-        width: 120px;
-        height: 120px;
+        width: 130px;
+        height: 123px;
       }
     }
 
