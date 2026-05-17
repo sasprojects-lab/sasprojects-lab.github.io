@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SAS - Premium Player</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="sas-player-styles.css">
+</head>
+
+<body>
+  <div class="sky-transition" id="sky-transition">
+    <div class="sky-gradient"></div>
+    <div class="celestial-body"></div>
+  </div>
+
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <img src="sas-player-logo-1.png" alt="SAS" class="logo-dark">
+        <img src="sas-player-logo-light.png" alt="SAS" class="logo-light">
+      </div>
+      <div class="header-actions">
+        <button class="theme-toggle" id="theme-toggle-btn" onclick="toggleTheme()" title="Switch dark/light mode">
+          <i class="fas fa-sun"></i>
+          <span>Light</span>
+        </button>
+        <div class="search-wrapper">
+          <div class="search-container">
+            <input type="text" id="link-input" placeholder="Paste one or more YouTube video links, or playlist link">
+            <button onclick="addLink()" title="Load links"><i class="fas fa-list-check"></i></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="content-area">
+      <div id="player-container">
+        <div id="yt-iframe"></div>
+      </div>
+      <div class="controls-info">
+        <h2 id="current-title">Select a track to begin</h2>
+        <div class="autoplay-badge"><i class="fas fa-bolt"></i> Autoplay Enabled</div>
+      </div>
+    </div>
+
+    <aside class="sidebar" id="playlist">
+      <div class="sidebar-header">
+        <div class="now-playing-label">Now Playing</div>
+        <div class="sidebar-track-title" id="sidebar-title">Select a track to begin</div>
+      </div>
+      <div class="queue-actions">
+        <button onclick="clearAllTracks()">Clear All</button>
+        <button onclick="clearPlayedTracks()">Clear Played</button>
+      </div>
+      <!-- Links will be populated here -->
+      <div id="track-list"></div>
+      <div class="disk-container">
+        <div class="disk" id="spinning-disk">
+          <svg class="disk-text" viewBox="0 0 100 100">
+            <defs>
+              <path id="circlePath" d="M 50, 50 m -35, 0 a 35,35 0 1,1 70,0 a 35,35 0 1,1 -70,0" />
+            </defs>
+            <text>
+              <textPath xlink:href="#circlePath">
+                SAS PREMIUM &bull; NOW PLAYING &bull; SAS PREMIUM &bull;
+              </textPath>
+            </text>
+          </svg>
+          <div class="disk-inner">
+            <button id="play-pause-btn">
+              <i class="fas fa-play"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="https://www.youtube.com/iframe_api"></script>
+    <script src="sas-player-script.js"></script>
+</body>
+
+</html>
+
+
+
+
