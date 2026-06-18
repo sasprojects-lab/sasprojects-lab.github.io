@@ -30,6 +30,7 @@ let videoLinks = [
     let isLightMode = false;
     let isThemeAnimating = false;
     let shouldResumeOnFocus = false;
+    let titleHydrationRun = 0;
     const disk = document.getElementById('spinning-disk');
     const playPauseBtn = document.getElementById('play-pause-btn');
     const playPauseIcon = playPauseBtn.querySelector('i');
@@ -38,6 +39,10 @@ let videoLinks = [
 
     function wait(ms) {
       return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function canUseNativeDrag() {
+      return window.matchMedia && window.matchMedia('(pointer: fine)').matches;
     }
 
     async function toggleTheme() {
@@ -285,6 +290,7 @@ let videoLinks = [
 
     // Disk Button Interaction
     playPauseBtn.addEventListener('click', () => {
+      if (!player || !player.getPlayerState) return;
       const state = player.getPlayerState();
       if (state == YT.PlayerState.PLAYING) {
         player.pauseVideo();
@@ -306,9 +312,11 @@ let videoLinks = [
         return;
       }
 
+      const fragment = document.createDocumentFragment();
       videoLinks.forEach((link, index) => {
-        playlistContainer.appendChild(createTrackItem(link, index, index === currentIndex));
+        fragment.appendChild(createTrackItem(link, index, index === currentIndex));
       });
+      playlistContainer.appendChild(fragment);
     }
 
     function updatePlaylistUI() {
@@ -341,9 +349,11 @@ let videoLinks = [
       refreshDisplayTitleFromPlayer();
 
       playlistContainer.innerHTML = '';
+      const fragment = document.createDocumentFragment();
       videoLinks.forEach((link, index) => {
-        playlistContainer.appendChild(createTrackItem(link, index, index === currentIndex));
+        fragment.appendChild(createTrackItem(link, index, index === currentIndex));
       });
+      playlistContainer.appendChild(fragment);
       hydrateVideoTitles();
     }
 
@@ -359,6 +369,12 @@ let videoLinks = [
     function getDisplayTrackTitle(link, index) {
       const baseTitle = (link && link.title) ? link.title : 'Loading title...';
       return `${index + 1}. ${baseTitle}`;
+    }
+
+    function updateTrackTitle(index) {
+      const titleNode = playlistContainer.querySelector(`.track-item[data-track-index="${index}"] .track-name`);
+      if (!titleNode || !videoLinks[index]) return;
+      titleNode.textContent = getDisplayTrackTitle(videoLinks[index], index);
     }
 
     async function fetchVideoTitle(videoId) {
@@ -380,16 +396,20 @@ let videoLinks = [
     }
 
     async function hydrateVideoTitles() {
-      const tasks = videoLinks.map(async (track, index) => {
+      const runId = ++titleHydrationRun;
+      const snapshot = videoLinks.map((track) => track && track.id);
+      const tasks = snapshot.map(async (videoId, index) => {
+        const track = videoLinks[index];
         if (!track || track.title) return;
-        const title = await fetchVideoTitle(track.id);
-        if (title && videoLinks[index] && videoLinks[index].id === track.id) {
+        const title = await fetchVideoTitle(videoId);
+        if (runId === titleHydrationRun && title && videoLinks[index] && videoLinks[index].id === videoId) {
           videoLinks[index].title = title;
+          updateTrackTitle(index);
         }
       });
 
       await Promise.all(tasks);
-      initPlaylist();
+      if (runId !== titleHydrationRun) return;
       refreshDisplayTitleFromPlayer();
       updatePlaylistUI();
     }
@@ -398,8 +418,8 @@ let videoLinks = [
       const div = document.createElement('div');
       div.className = `track-item ${isActive ? 'active' : ''}`;
       div.dataset.trackIndex = index;
-      div.draggable = !usingYouTubePlaylist;
-      if (!usingYouTubePlaylist) {
+      div.draggable = !usingYouTubePlaylist && canUseNativeDrag();
+      if (div.draggable) {
         div.classList.add('draggable');
         div.title = 'Drag to reorder';
       }
