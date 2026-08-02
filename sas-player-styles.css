@@ -743,42 +743,47 @@
       .header-inner {
         flex-wrap: wrap;
       }
-
       .header-actions {
         display: contents;
       }
-
       .search-wrapper {
         order: 3;
         width: 100%;
         max-width: none;
       }
-
       main {
         flex-direction: column;
         overflow: visible;
       }
-
       .sidebar {
-        padding-top: 120px;
+        max-width: 100%;
+        padding-top: 155px;
       }
-
       .sidebar-header {
-        width: calc(100% - 195px);
+        width: calc(100% - 180px);
       }
-
+      .sidebar::before {
+        width: 155px;
+        height: 155px;
+        top: -5px;
+        right: 0;
+      }
       #track-list {
         max-height: 460px;
       }
-
       .disk-container {
-        width: 130px;
-        height: 123px;
+        width: 135px;
+        height: 125px;
+        right: 10px;
+        top: 8px;
       }
-
       .disk {
-        width: 130px;
-        height: 123px;
+        width: 125px;
+        height: 125px;
+      }
+      .remote-control-panel {
+        width: 95%;
+        bottom: 15px;
       }
     }
 
@@ -786,32 +791,69 @@
       header {
         padding: 12px;
       }
-
       main {
         padding: 12px;
         gap: 12px;
       }
-
       .logo img {
         height: 44px;
         width: 112px;
       }
-
       .theme-toggle {
         padding: 8px 12px;
       }
-
       .search-container {
         padding-left: 12px;
       }
-
       .search-container button {
         padding: 8px 14px;
       }
-
+      .sidebar {
+        padding-top: 120px;
+      }
+      .sidebar-header {
+        width: calc(100% - 110px);
+        padding: 15px 10px;
+        height: 120px;
+      }
+      .sidebar-header .sidebar-track-title {
+        font-size: 13px;
+      }
       .sidebar::before {
-        width: 153px;
-        height: 153px;
+        width: 135px;
+        height: 135px;
+        top: 0px;
+      }
+      .disk-container {
+        width: 115px;
+        height: 103px;
+        right: 10px;
+        top: 16px;
+      }
+      .disk {
+        width: 107px;
+        height: 107px;
+      }
+      #player-container {
+        border-radius: 8px;
+      }
+      .queue-actions button {
+        font-size: 11px;
+        padding: 5px 8px;
+      }
+      .remote-control-panel {
+        width: 100%;
+        bottom: 0;
+        border-radius: 20px 20px 0 0;
+        border-bottom: none;
+        padding: 15px 12px;
+      }
+      .sticky-remote-btn {
+        bottom: 15px;
+        right: 15px;
+        width: 48px;
+        height: 48px;
+        font-size: 20px;
       }
     }
 
