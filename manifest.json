@@ -1,0 +1,41 @@
+{
+  "name": "SAS Premium Player",
+  "short_name": "SAS Player",
+  "description": "Premium YouTube music player with real-time remote control and collaborative playlist sync.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#c0392b",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "sas-icon.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "sas-icon.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["music", "entertainment"],
+  "shortcuts": [
+    {
+      "name": "Play / Pause",
+      "short_name": "Play",
+      "description": "Toggle play or pause",
+      "url": "./index.html?action=playpause",
+      "icons": [{ "src": "sas-icon.jpg", "sizes": "96x96" }]
+    },
+    {
+      "name": "Next Track",
+      "short_name": "Next",
+      "description": "Skip to next track",
+      "url": "./index.html?action=next",
+      "icons": [{ "src": "sas-icon.jpg", "sizes": "96x96" }]
+    }
+  ]
+}
