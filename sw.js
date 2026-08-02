@@ -1,7 +1,7 @@
 // SAS Player Service Worker
 // Caches the app shell for fast load and offline UI
 
-const CACHE_NAME = 'sas-player-v1';
+const CACHE_NAME = 'sas-player-v2';
 const SHELL_ASSETS = [
   './index.html',
   './sas-player-styles.css',
