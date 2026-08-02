@@ -5,19 +5,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SAS - Premium Player</title>
-  <meta name="description" content="SAS Premium Player — collaborative YouTube music player with real-time remote control, playlist sync across devices, and OS-level media key support.">
-
-  <!-- PWA -->
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#c0392b">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="SAS Player">
-  <link rel="apple-touch-icon" href="sas-icon.jpg">
-
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="sas-player-styles.css">
+  <link rel="stylesheet" href="sas-player-styles.css?v=17">
 </head>
 
 <body>
@@ -36,16 +25,6 @@
         <button class="theme-toggle" id="theme-toggle-btn" onclick="toggleTheme()" title="Switch dark/light mode">
           <i class="fas fa-sun"></i>
           <span>Light</span>
-        </button>
-        <!-- PWA Install Button (shown only when browser fires beforeinstallprompt) -->
-        <button class="install-app-btn hidden" id="install-app-btn" title="Install SAS Player as an app">
-          <i class="fas fa-download"></i>
-          <span>Install</span>
-        </button>
-        <!-- Picture-in-Picture Mini Player (shown only on supported browsers) -->
-        <button class="pip-btn hidden" id="pip-btn" onclick="openMiniPlayer()" title="Pop out mini player">
-          <i class="fas fa-external-link-alt"></i>
-          <span>Pop Out</span>
         </button>
         <button class="remote-access-btn" id="request-access-btn" onclick="openAccessModal()" title="Remote Control Access">
           <i class="fas fa-wifi"></i>
@@ -74,6 +53,18 @@
       <div class="controls-info">
         <h2 id="current-title">Select a track to begin</h2>
         <div class="autoplay-badge"><i class="fas fa-bolt"></i> Autoplay Enabled</div>
+      </div>
+      
+      <!-- Live Status Bar -->
+      <div class="live-status-bar" id="live-status-bar" style="display: none;">
+        <div class="live-status-item">
+          <i class="fas fa-play-circle"></i>
+          <span id="live-status-playback">Playing</span>
+        </div>
+        <div class="live-status-item">
+          <i class="fas fa-volume-up"></i>
+          <span id="live-status-volume">Volume: 100%</span>
+        </div>
       </div>
     </div>
 
@@ -110,16 +101,26 @@
     </aside>
   </main>
 
+  <!-- Sticky Remote Toggle Button -->
+  <button id="sticky-remote-btn" class="sticky-remote-btn hidden" onclick="toggleRemotePanel()" title="Open Remote Controller">
+    <i class="fas fa-gamepad"></i>
+  </button>
+
   <!-- Remote Control Floating Panel -->
   <div class="remote-control-panel hidden" id="remote-control-panel">
-    <div class="remote-panel-header">
-      <div class="remote-panel-title">
-        <i class="fas fa-broadcast-tower"></i> Remote Controller
+    <div class="remote-panel-header" style="display: flex; justify-content: space-between; align-items: flex-start;">
+      <div>
+        <div class="remote-panel-title">
+          <i class="fas fa-broadcast-tower"></i> Remote Controller
+        </div>
+        <div class="remote-now-playing" style="margin-top: 4px;">
+          <span class="np-dot" id="remote-np-dot"></span>
+          <span id="remote-now-playing-title">Select a track to begin</span>
+        </div>
       </div>
-      <div class="remote-now-playing">
-        <span class="np-dot" id="remote-np-dot"></span>
-        <span id="remote-now-playing-title">Select a track to begin</span>
-      </div>
+      <button onclick="toggleRemotePanel()" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; transition: 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'" title="Minimize">
+        <i class="fas fa-minus"></i>
+      </button>
     </div>
     <div class="remote-controls-body">
       <div class="remote-btn-group">
@@ -184,7 +185,7 @@
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
   <script src="https://www.youtube.com/iframe_api"></script>
-  <script src="sas-player-script.js"></script>
+  <script src="sas-player-script.js?v=17"></script>
 </body>
 
 </html>
