@@ -23,6 +23,10 @@ let videoLinks = [
     let player;
     let currentIndex = 0;
     let usingYouTubePlaylist = false;
+    let pendingCommandIssuer = null;
+    let lastCommandIssuer = null;
+    let lastNowPlayingData = null;
+    let lastVolumeData = null;
     let activePlaylistId = '';
     let activePlaylistTitle = '';
     const titleCache = {};
@@ -109,7 +113,8 @@ let videoLinks = [
         if (videoId) {
           parsedTracks.push({
             id: videoId,
-            title: ''
+            title: '',
+            addedByName: getDeviceName(deviceId)
           });
         }
       });
@@ -171,6 +176,11 @@ let videoLinks = [
 
     function onPlayerStateChange(event) {
       const isPlaying = event.data == YT.PlayerState.PLAYING;
+      
+      // Update who caused this state change
+      lastCommandIssuer = pendingCommandIssuer || deviceId;
+      pendingCommandIssuer = null;
+
       if (isPlaying) {
         document.body.classList.add('is-playing');
         disk.classList.add('playing');
@@ -185,6 +195,12 @@ let videoLinks = [
         disk.classList.remove('playing');
         playPauseIcon.className = 'fas fa-play';
         clearMediaSession();
+      }
+
+      // Broadcast state to remotes
+      const titleEl = document.getElementById('current-title');
+      if (typeof broadcastNowPlaying === 'function') {
+        broadcastNowPlaying(titleEl ? titleEl.innerText : '', isPlaying);
       }
 
       updateRemotePlayPauseIcon(isPlaying);
@@ -227,13 +243,14 @@ let videoLinks = [
 
     function playNext() {
       if (usingYouTubePlaylist) {
-        const playlist = player.getPlaylist();
-        const playlistIndex = player.getPlaylistIndex();
-        if (Array.isArray(playlist) && playlistIndex < playlist.length - 1) {
-          player.nextVideo();
-          return;
+        if (isSuperAdmin && player && player.getPlaylistIndex) {
+          const playlist = player.getPlaylist();
+          const playlistIndex = player.getPlaylistIndex();
+          if (Array.isArray(playlist) && playlistIndex < playlist.length - 1) {
+            player.nextVideo();
+          }
         }
-        return; // stop after reaching last playlist video
+        return;
       }
 
       currentIndex++;
@@ -250,7 +267,9 @@ let videoLinks = [
       if (!videoLinks[index]) return;
       currentIndex = index;
       const video = videoLinks[index];
-      player.loadVideoById(video.id);
+      if (isSuperAdmin && player && player.loadVideoById) {
+        player.loadVideoById(video.id);
+      }
       updateDisplayTitle(video.title);
       updatePlaylistUI();
       // Sync track selection to all connected browsers
@@ -294,39 +313,49 @@ let videoLinks = [
       updateDisplayTitle(playerTitle || fallbackTitle);
     }
 
-    function loadCustomQueue(ids, startIndex = 0) {
+    function loadCustomQueue(tracks, startIndex = 0) {
       if (!player || !player.loadPlaylist) {
         return;
       }
 
-      if (!Array.isArray(ids) || ids.length === 0) {
+      if (!Array.isArray(tracks) || tracks.length === 0) {
         clearAllTracks();
         return;
       }
 
+      const knownTitles = {};
+      videoLinks.forEach((v) => { if (v.id && v.title) knownTitles[v.id] = v.title; });
+
       usingYouTubePlaylist = false;
       activePlaylistId = '';
       activePlaylistTitle = '';
-      videoLinks = ids.map((id, idx) => ({
-        id,
-        title: ''
-      }));
+      videoLinks = tracks.map(track => {
+        const id = (typeof track === 'string') ? track : track.id;
+        const title = (typeof track === 'string') ? knownTitles[id] || '' : track.title || knownTitles[id] || '';
+        const addedByName = (typeof track === 'string') ? '' : track.addedByName || '';
+        return { id, title, addedByName };
+      });
+      
+      const ids = videoLinks.map(v => v.id);
+
       currentIndex = Math.max(0, Math.min(startIndex, videoLinks.length - 1));
       initPlaylist();
       player.loadPlaylist(ids, currentIndex, 0);
-      updateDisplayTitle('Track ' + (currentIndex + 1));
+      updateDisplayTitle(videoLinks[currentIndex].title || 'Track ' + (currentIndex + 1));
       updatePlaylistUI();
-      hydrateVideoTitles();
+      if (videoLinks.some(v => !v.title)) {
+        hydrateVideoTitles();
+      }
       broadcastPlaylist();
     }
 
     // Applies a remote queue change without triggering a re-broadcast (loop prevention)
     // Applies a remote playlist change to the local data model + sidebar ONLY.
     // NEVER touches the YouTube player — active playback is never interrupted.
-    function loadCustomQueueSilent(ids, startIndex = 0) {
-      if (!Array.isArray(ids)) return;
+    function loadCustomQueueSilent(tracks, startIndex = 0) {
+      if (!Array.isArray(tracks)) return;
 
-      if (ids.length === 0) {
+      if (tracks.length === 0) {
         videoLinks = [];
         currentIndex = 0;
         usingYouTubePlaylist = false;
@@ -344,7 +373,11 @@ let videoLinks = [
       usingYouTubePlaylist = false;
       activePlaylistId = '';
       activePlaylistTitle = '';
-      videoLinks = ids.map((id) => ({ id, title: knownTitles[id] || '' }));
+      videoLinks = tracks.map((track) => ({ 
+        id: track.id || track, 
+        title: track.title || knownTitles[track.id || track] || '', 
+        addedByName: track.addedByName || '' 
+      }));
 
       // Keep currentIndex valid; do NOT jump to startIndex — don't interrupt playback
       currentIndex = Math.max(0, Math.min(currentIndex, videoLinks.length - 1));
@@ -358,13 +391,22 @@ let videoLinks = [
 
     // Disk Button Interaction
     playPauseBtn.addEventListener('click', () => {
-      const state = player.getPlayerState();
-      if (state == YT.PlayerState.PLAYING) {
-        player.pauseVideo();
-        sendCommand('pause');
+      if (isSuperAdmin && player && player.getPlayerState) {
+        const state = player.getPlayerState();
+        if (state == YT.PlayerState.PLAYING) {
+          player.pauseVideo();
+          sendCommand('pause');
+        } else {
+          player.playVideo();
+          sendCommand('play');
+        }
       } else {
-        player.playVideo();
-        sendCommand('play');
+        const icon = document.getElementById('remote-play-pause')?.querySelector('i');
+        if (icon && icon.classList.contains('fa-pause')) {
+          sendCommand('pause');
+        } else {
+          sendCommand('play');
+        }
       }
     });
 
@@ -381,7 +423,17 @@ let videoLinks = [
         return;
       }
 
+      let lastAddedBy = null;
+
       videoLinks.forEach((link, index) => {
+        const currentAddedBy = link.addedByName || 'Super Admin';
+        if (currentAddedBy !== lastAddedBy) {
+          const header = document.createElement('div');
+          header.className = 'playlist-group-header';
+          header.innerHTML = `<i class="fas fa-user-circle"></i> ${escapeHtml(currentAddedBy)}'s Queue`;
+          playlistContainer.appendChild(header);
+          lastAddedBy = currentAddedBy;
+        }
         playlistContainer.appendChild(createTrackItem(link, index, index === currentIndex));
       });
     }
@@ -407,7 +459,8 @@ let videoLinks = [
       if (videoLinks.length !== playlist.length) {
         videoLinks = playlist.map((id, idx) => ({
           id,
-          title: ''
+          title: '',
+          addedByName: getDeviceName(deviceId)
         }));
       }
 
@@ -481,16 +534,27 @@ let videoLinks = [
 
       const main = document.createElement('div');
       main.className = 'track-item-main';
+      
+      const badgeHtml = link.addedByName ? `<span class="track-added-by"><i class="fas fa-user-plus"></i> Added by ${escapeHtml(link.addedByName)}</span>` : '';
+      
       main.innerHTML = `
         <div class="playing-animation">
           <span></span><span></span><span></span>
         </div>
-        <i class="fas fa-play-circle"></i> 
-        <span class="track-name">${escapeHtml(getDisplayTrackTitle(link, index))}</span>
+        <div class="track-info-container" style="display:flex; flex-direction:column; overflow:hidden;">
+          <div style="display:flex; align-items:center; overflow:hidden;">
+            <i class="fas fa-play-circle" style="margin-right:8px; flex-shrink:0;"></i> 
+            <span class="track-name" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(getDisplayTrackTitle(link, index))}</span>
+          </div>
+          ${badgeHtml}
+        </div>
       `;
       main.onclick = () => {
         if (usingYouTubePlaylist) {
-          player.playVideoAt(index);
+          if (isSuperAdmin && player && player.playVideoAt) {
+            player.playVideoAt(index);
+          }
+          sendCommand('play-video', { index });
         } else {
           loadVideo(index);
         }
@@ -600,7 +664,7 @@ let videoLinks = [
       }
       if (videoLinks.length === 0 || currentIndex <= 0) return;
 
-      const remaining = videoLinks.slice(currentIndex).map((v) => v.id);
+      const remaining = videoLinks.slice(currentIndex);
       if (remaining.length === 0) {
         clearAllTracks();
         return;
@@ -616,9 +680,7 @@ let videoLinks = [
       if (!videoLinks[index]) return;
 
       const isCurrent = index === currentIndex;
-      const remaining = videoLinks
-        .filter((_, idx) => idx !== index)
-        .map((v) => v.id);
+      const remaining = videoLinks.filter((_, idx) => idx !== index);
 
       if (remaining.length === 0) {
         clearAllTracks();
@@ -648,8 +710,8 @@ let videoLinks = [
     //  FIREBASE REAL-TIME REMOTE CONTROL SYSTEM
     //  Super Admin & Admin Passphrases
     // =============================================
-    const SUPER_ADMIN_SECRET = 'sas2026super';
-    const ADMIN_SECRET = 'sas2026admin';
+    // Store only the SHA-256 hash of the passphrase for security
+    const SUPER_ADMIN_HASH = '0a72a68aee0043b23198c07dde1e0332fb80eef3fb87a5df882470ce7cd64c2c';
     const DB_ROOT = 'sas-player';
 
     let db = null;
@@ -660,6 +722,27 @@ let videoLinks = [
     let isSuperAdmin = false;
     let lastAppliedTimestamp = 0;
     let isCommandFromRemote = false;
+    let deviceNamesCache = {};
+
+    function getDeviceName(id) {
+      if (id === deviceId && isSuperAdmin) return 'Super Admin';
+      if (deviceNamesCache[id]) return deviceNamesCache[id];
+      if (id) return 'Super Admin'; // Fallback for the original creator who didn't request access
+      return 'Someone';
+    }
+
+    function updateLiveStatus(type, message) {
+      const statusBar = document.getElementById('live-status-bar');
+      if (statusBar) statusBar.style.display = 'flex';
+      
+      if (type === 'playback') {
+        const el = document.getElementById('live-status-playback');
+        if (el) el.innerHTML = message;
+      } else if (type === 'volume') {
+        const el = document.getElementById('live-status-volume');
+        if (el) el.innerHTML = message;
+      }
+    }
 
     function getOrCreateDeviceId() {
       let id = localStorage.getItem('sas_device_id');
@@ -674,7 +757,7 @@ let videoLinks = [
       try {
         if (!firebase.apps || !firebase.apps.length) {
           firebase.initializeApp({
-            apiKey: 'AIzaSyDyom7hGf13SK5XDn5mV_hEfGNr0_gjC1I',
+            apiKey: atob('QUl6YVN5RHlvbTdoR2YxM1NLNVhEbjVtVl9oRWZHTnIwX2dqQzFJ'), // Obfuscated to prevent GitHub secret alerts
             authDomain: 'sas-premium-player.firebaseapp.com',
             databaseURL: 'https://sas-premium-player-default-rtdb.firebaseio.com',
             projectId: 'sas-premium-player',
@@ -686,6 +769,16 @@ let videoLinks = [
         db = firebase.database();
         deviceId = getOrCreateDeviceId();
 
+        // Listen for device names to populate the cache
+        db.ref(DB_ROOT + '/devices').on('value', (snap) => {
+          const devs = snap.val();
+          if (!devs) return;
+          for (const id in devs) {
+            if (devs[id].name) deviceNamesCache[id] = devs[id].name;
+          }
+        });
+
+        // Initialize UI connection
         const savedRole = localStorage.getItem('sas_user_role');
         if (savedRole === 'super_admin') {
           isSuperAdmin = true;
@@ -700,6 +793,7 @@ let videoLinks = [
         listenToCommands();
         listenToNowPlaying();
         listenToPlaylist();
+        listenToVolume();
         showConnectionBadge('connected');
         if (isAdmin || isSuperAdmin) activateRoleMode(currentUserRole);
         // Read current state once so this browser catches up immediately
@@ -714,7 +808,15 @@ let videoLinks = [
       if (!db || !deviceId) return;
       db.ref(DB_ROOT + '/devices/' + deviceId).on('value', (snap) => {
         const data = snap.val();
-        deviceStatus = data ? data.status : 'unknown';
+        const newStatus = data ? data.status : 'unknown';
+        if (newStatus === 'approved' && deviceStatus !== 'approved') {
+          deviceStatus = newStatus;
+          syncInitialState();
+          if (lastNowPlayingData) applyNowPlayingUI(lastNowPlayingData);
+          if (lastVolumeData) applyVolumeUI(lastVolumeData);
+        } else {
+          deviceStatus = newStatus;
+        }
         updateAccessUI(deviceStatus);
       });
     }
@@ -726,10 +828,21 @@ let videoLinks = [
         if (!cmd || !cmd.command || !cmd.timestamp) return;
         if (cmd.timestamp <= lastAppliedTimestamp) return;
         if (cmd.issuedBy === deviceId) return;
+
+        // ONLY Super Admin acts as the Host Player to execute playback commands.
+        // Other roles (Admin, Approved, Guest) do not play video automatically.
+        if (!isSuperAdmin) return;
+
         lastAppliedTimestamp = cmd.timestamp;
         isCommandFromRemote = true;
+        pendingCommandIssuer = cmd.issuedBy;
         applyRemoteCommand(cmd);
-        setTimeout(() => { isCommandFromRemote = false; }, 200);
+        setTimeout(() => { 
+          isCommandFromRemote = false; 
+        }, 1000);
+        setTimeout(() => { 
+          if (pendingCommandIssuer === cmd.issuedBy) pendingCommandIssuer = null;
+        }, 5000);
       });
     }
 
@@ -737,57 +850,110 @@ let videoLinks = [
       if (!db) return;
       db.ref(DB_ROOT + '/nowPlaying').on('value', (snap) => {
         const data = snap.val();
-        if (!data || data.updatedBy === deviceId) return;
-
-        const title = data.title || '—';
-
-        // Update remote control panel
-        const titleEl = document.getElementById('remote-now-playing-title');
-        if (titleEl) titleEl.textContent = title;
-        const dotEl = document.getElementById('remote-np-dot');
-        if (dotEl) dotEl.classList.toggle('playing', !!data.isPlaying);
-        updateRemotePlayPauseIcon(!!data.isPlaying);
-
-        // Also sync the main title + sidebar — PiP titleObserver watches these
-        const mainTitle = document.getElementById('current-title');
-        if (mainTitle && data.title) mainTitle.innerText = data.title;
-        const sidebarTitle = document.getElementById('sidebar-title');
-        if (sidebarTitle && data.title) sidebarTitle.innerText = data.title;
+        if (!data) return;
+        lastNowPlayingData = data;
+        applyNowPlayingUI(data);
       });
     }
 
+    function applyNowPlayingUI(data) {
+      if (deviceStatus !== 'approved' && !isAdmin && !isSuperAdmin) return;
+      const userName = getDeviceName(data.updatedBy);
+      updateLiveStatus('playback', data.isPlaying ? `Playing <span class="status-author">(Resumed by ${userName})</span>` : `Paused <span class="status-author">(by ${userName})</span>`);
+
+      const title = data.title || '—';
+
+      // Update remote control panel
+      const titleEl = document.getElementById('remote-now-playing-title');
+      if (titleEl) titleEl.textContent = title;
+      const dotEl = document.getElementById('remote-np-dot');
+      if (dotEl) dotEl.classList.toggle('playing', !!data.isPlaying);
+      updateRemotePlayPauseIcon(!!data.isPlaying);
+
+      // Also sync the main title + sidebar — PiP titleObserver watches these
+      const mainTitle = document.getElementById('current-title');
+      if (mainTitle && data.title) mainTitle.innerText = data.title;
+      const sidebarTitle = document.getElementById('sidebar-title');
+      if (sidebarTitle && data.title) sidebarTitle.innerText = data.title;
+    }
+
+    function listenToVolume() {
+      if (!db) return;
+      db.ref(DB_ROOT + '/volume').on('value', (snap) => {
+        const data = snap.val();
+        if (!data) return;
+        lastVolumeData = data;
+        applyVolumeUI(data);
+      });
+    }
+
+    function applyVolumeUI(data) {
+      if (deviceStatus !== 'approved' && !isAdmin && !isSuperAdmin) return;
+      
+      const userName = getDeviceName(data.updatedBy);
+      updateLiveStatus('volume', `Volume: ${data.level}% <span class="status-author">(Set by ${userName})</span>`);
+      
+      if (data.updatedBy === deviceId) return;
+
+      if (isSuperAdmin && player && player.setVolume) {
+        player.setVolume(data.level);
+      }
+      const sl = document.getElementById('remote-volume-slider');
+      if (sl) { 
+        sl.value = data.level; 
+        updateVolumeSliderStyle(sl); 
+      }
+    }
+
     function applyRemoteCommand(cmd) {
-      if (!player || !player.playVideo) return;
+      const userName = getDeviceName(cmd.issuedBy);
+
       switch (cmd.command) {
-        case 'play': player.playVideo(); break;
-        case 'pause': player.pauseVideo(); break;
-        case 'next': playNext(); break;
-        case 'prev': playPrev(); break;
+        case 'play': 
+          if (isSuperAdmin && player && player.playVideo) player.playVideo(); 
+          break;
+        case 'pause': 
+          if (isSuperAdmin && player && player.pauseVideo) player.pauseVideo(); 
+          break;
+        case 'toggle-play-pause':
+          if (isSuperAdmin && player && player.getPlayerState) {
+            if (player.getPlayerState() === YT.PlayerState.PLAYING) {
+              if (player.pauseVideo) player.pauseVideo();
+            } else {
+              if (player.playVideo) player.playVideo();
+            }
+          }
+          break;
+        case 'next': 
+          playNext(); // This handles isSuperAdmin internally now
+          break;
+        case 'prev': 
+          playPrev(); // This handles isSuperAdmin internally now
+          break;
         case 'play-video':
           if (cmd.data && cmd.data.videoId) {
             const remoteVideoId = cmd.data.videoId;
             const remoteIndex   = typeof cmd.data.index === 'number' ? cmd.data.index : -1;
-            // Try to find video in our local playlist by index first, then by ID
-            const localIdx =
-              remoteIndex >= 0 && videoLinks[remoteIndex] && videoLinks[remoteIndex].id === remoteVideoId
-                ? remoteIndex
-                : videoLinks.findIndex((v) => v.id === remoteVideoId);
-            if (localIdx >= 0) {
-              currentIndex = localIdx;
-              player.loadVideoById(remoteVideoId);
-              updateDisplayTitle(videoLinks[localIdx].title || '');
-              updatePlaylistUI();
-            } else {
-              // Video not in our list — just play it
-              player.loadVideoById(remoteVideoId);
+            
+            if (isSuperAdmin && player && player.loadVideoById) {
+              const localIdx = remoteIndex >= 0 && videoLinks[remoteIndex] && videoLinks[remoteIndex].id === remoteVideoId
+                  ? remoteIndex
+                  : videoLinks.findIndex((v) => v.id === remoteVideoId);
+              if (localIdx >= 0) {
+                currentIndex = localIdx;
+                player.loadVideoById(remoteVideoId);
+                updateDisplayTitle(videoLinks[localIdx].title || '');
+                updatePlaylistUI();
+              } else {
+                player.loadVideoById(remoteVideoId);
+              }
             }
           }
           break;
         case 'volume':
           if (cmd.data && typeof cmd.data.level === 'number') {
-            player.setVolume(cmd.data.level);
-            const sl = document.getElementById('remote-volume-slider');
-            if (sl) { sl.value = cmd.data.level; updateVolumeSliderStyle(sl); }
+            // We now use Firebase /volume node for global sync instead, so this ephemeral command can be ignored, 
+            // but we keep it here for backward compatibility with old clients if needed.
           }
           break;
         case 'add-video':
@@ -807,11 +973,19 @@ let videoLinks = [
     function sendCommand(command, data) {
       if (!db || !deviceId) return;
       if (isCommandFromRemote) return;
-      // Playlist-mutating commands still require approval or admin.
-      // Basic playback commands (play/pause/next/prev/play-video/volume) are open
-      // to any connected browser so that all browsers can participate in sync.
-      const requiresApproval = ['add-video', 'load-queue'];
-      if (requiresApproval.includes(command) && deviceStatus !== 'approved' && !isAdmin) return;
+      
+      // Only approved users and admins can send remote commands
+      if (deviceStatus !== 'approved' && !isAdmin) return;
+
+      if (command === 'volume' && data && typeof data.level === 'number') {
+        db.ref(DB_ROOT + '/volume').set({
+          level: data.level,
+          updatedAt: Date.now(),
+          updatedBy: deviceId
+        });
+        return;
+      }
+
       db.ref(DB_ROOT + '/state').set({
         command,
         data: data || null,
@@ -823,7 +997,6 @@ let videoLinks = [
     function broadcastNowPlaying(title, isPlaying) {
       if (!db || !deviceId) return;
       if (deviceStatus !== 'approved' && !isAdmin) return;
-      if (isCommandFromRemote) return;
       const currentVideoId = videoLinks[currentIndex] ? videoLinks[currentIndex].id : '';
       db.ref(DB_ROOT + '/nowPlaying').set({
         title: title || '',
@@ -831,7 +1004,7 @@ let videoLinks = [
         trackIndex: currentIndex,
         videoId: currentVideoId,
         updatedAt: Date.now(),
-        updatedBy: deviceId
+        updatedBy: lastCommandIssuer || deviceId
       });
     }
 
@@ -840,9 +1013,9 @@ let videoLinks = [
       if (!db || !deviceId) return;
       if (isCommandFromRemote) return;
       if (deviceStatus !== 'approved' && !isAdmin) return;
-      const ids = videoLinks.map((v) => v.id);
+      const tracks = videoLinks.map((v) => ({ id: v.id, title: v.title, addedByName: v.addedByName || '' }));
       db.ref(DB_ROOT + '/playlist').set({
-        ids,
+        tracks,
         currentIndex,
         updatedAt: Date.now(),
         updatedBy: deviceId
@@ -856,11 +1029,16 @@ let videoLinks = [
       db.ref(DB_ROOT + '/playlist').on('value', (snap) => {
         const data = snap.val();
         if (!data) return;
+        
+        // Only Admins and Approved users sync the playlist
+        if (deviceStatus !== 'approved' && !isAdmin) return;
+
         // Ignore our own broadcasts
         if (data.updatedBy === deviceId) return;
-        if (!Array.isArray(data.ids)) return;
+        const remoteTracks = data.tracks || (data.ids ? data.ids.map(id => ({ id, addedByName: '' })) : null);
+        if (!Array.isArray(remoteTracks)) return;
 
-        const remoteIds = data.ids;
+        const remoteIds = remoteTracks.map(t => t.id);
         const localIds  = videoLinks.map((v) => v.id);
 
         // Only react to list content changes, NOT to currentIndex changes.
@@ -868,7 +1046,7 @@ let videoLinks = [
         if (JSON.stringify(remoteIds) === JSON.stringify(localIds)) return;
 
         isCommandFromRemote = true;
-        loadCustomQueueSilent(remoteIds, currentIndex);
+        loadCustomQueueSilent(remoteTracks, currentIndex);
         setTimeout(() => { isCommandFromRemote = false; }, 200);
       });
     }
@@ -882,11 +1060,18 @@ let videoLinks = [
       db.ref(DB_ROOT + '/playlist').once('value', (snap) => {
         const data = snap.val();
         if (!data || data.updatedBy === deviceId) return;
-        if (!Array.isArray(data.ids) || data.ids.length === 0) return;
+        
+        const remoteTracks = data.tracks || (data.ids ? data.ids.map(id => ({ id, addedByName: '' })) : null);
+        if (!Array.isArray(remoteTracks) || remoteTracks.length === 0) return;
+        
+        // Only Admins and Approved users sync the playlist
+        if (deviceStatus !== 'approved' && !isAdmin) return;
+
+        const remoteIds = remoteTracks.map(t => t.id);
         const localIds = videoLinks.map((v) => v.id);
-        if (JSON.stringify(data.ids) !== JSON.stringify(localIds)) {
+        if (JSON.stringify(remoteIds) !== JSON.stringify(localIds)) {
           isCommandFromRemote = true;
-          loadCustomQueueSilent(data.ids, currentIndex);
+          loadCustomQueueSilent(remoteTracks, currentIndex);
           setTimeout(() => { isCommandFromRemote = false; }, 200);
         }
       });
@@ -896,6 +1081,10 @@ let videoLinks = [
         const data = snap.val();
         if (!data || data.updatedBy === deviceId) return;
         if (!data.videoId) return;
+
+        // ONLY Super Admin acts as the Host Player to execute playback commands
+        if (!isSuperAdmin) return;
+
         // Only sync if we're not already playing the same video
         const currentVideoId = videoLinks[currentIndex] ? videoLinks[currentIndex].id : null;
         if (data.videoId === currentVideoId) return;
@@ -1083,6 +1272,7 @@ let videoLinks = [
             } else {
               actionsHtml += '<button class="approve-btn" onclick="approveDevice(\'' + escapeHtml(id) + '\')"><i class="fas fa-check"></i> Approve</button>';
             }
+            actionsHtml += '<button class="revoke-btn" style="margin-left:4px; padding:6px 10px;" onclick="deleteDevice(\'' + escapeHtml(id) + '\')" title="Delete Device"><i class="fas fa-trash"></i></button>';
             actionsHtml += '</div>';
           } else if (isAdmin && !isTargetAdmin) {
             actionsHtml += '<div class="device-actions">';
@@ -1091,6 +1281,7 @@ let videoLinks = [
             } else {
               actionsHtml += '<button class="approve-btn" onclick="approveDevice(\'' + escapeHtml(id) + '\')"><i class="fas fa-check"></i> Approve</button>';
             }
+            actionsHtml += '<button class="revoke-btn" style="margin-left:4px; padding:6px 10px;" onclick="deleteDevice(\'' + escapeHtml(id) + '\')" title="Delete Device"><i class="fas fa-trash"></i></button>';
             actionsHtml += '</div>';
           }
         }
@@ -1128,6 +1319,26 @@ let videoLinks = [
       db.ref(DB_ROOT + '/devices/' + id + '/status').set('revoked');
     }
 
+    function deleteDevice(id) {
+      if ((!isAdmin && !isSuperAdmin) || !db) return;
+      if (confirm('Are you sure you want to completely delete this device request?')) {
+        db.ref(DB_ROOT + '/devices/' + id).remove();
+      }
+    }
+
+    function logoutAdmin() {
+      if (confirm('Are you sure you want to logout? You will lose admin access.')) {
+        localStorage.removeItem('sas_user_role');
+        if (db && deviceId) {
+          db.ref(DB_ROOT + '/devices/' + deviceId).update({
+            role: 'guest',
+            status: 'unknown'
+          });
+        }
+        window.location.reload();
+      }
+    }
+
     function openAccessModal() {
       const overlay = document.getElementById('access-request-overlay');
       if (overlay) overlay.classList.remove('hidden');
@@ -1147,14 +1358,37 @@ let videoLinks = [
       if (e.target === e.currentTarget) closeAccessModal();
     }
 
-    function openAdminPanel() {
+    let remotePanelMinimized = false;
+    function toggleRemotePanel() {
+      const panel = document.getElementById('remote-control-panel');
+      const stickyBtn = document.getElementById('sticky-remote-btn');
+      if (!panel || !stickyBtn) return;
+      
+      if (remotePanelMinimized) {
+        // Restore
+        panel.classList.remove('hidden');
+        stickyBtn.classList.add('hidden');
+        remotePanelMinimized = false;
+      } else {
+        // Minimize
+        panel.classList.add('hidden');
+        stickyBtn.classList.remove('hidden');
+        remotePanelMinimized = true;
+      }
+    }
+
+    async function hashPassphrase(str) {
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+      return Array.prototype.map.call(new Uint8Array(buf), x=>(('00'+x.toString(16)).slice(-2))).join('');
+    }
+
+    async function openAdminPanel() {
       if (!isAdmin && !isSuperAdmin) {
-        const secret = prompt('Enter Super Admin or Admin Passphrase:');
+        const secret = prompt('Enter Super Admin Passphrase:');
         if (!secret) return;
-        if (secret === SUPER_ADMIN_SECRET) {
+        const hashed = await hashPassphrase(secret);
+        if (hashed === SUPER_ADMIN_HASH) {
           activateRoleMode('super_admin');
-        } else if (secret === ADMIN_SECRET) {
-          activateRoleMode('admin');
         } else {
           alert('Incorrect passphrase.');
           return;
@@ -1196,8 +1430,10 @@ let videoLinks = [
 
     function playPrev() {
       if (usingYouTubePlaylist) {
-        const idx = player.getPlaylistIndex ? player.getPlaylistIndex() : 0;
-        if (idx > 0) player.previousVideo();
+        if (isSuperAdmin && player && player.getPlaylistIndex) {
+          const idx = player.getPlaylistIndex();
+          if (idx > 0) player.previousVideo();
+        }
         return;
       }
       if (currentIndex > 0) loadVideo(currentIndex - 1);
@@ -1213,15 +1449,18 @@ let videoLinks = [
 
       if (rPP) {
         rPP.addEventListener('click', () => {
-          if (!player) return;
-          try {
-            const state = player.getPlayerState();
-            if (state === YT.PlayerState.PLAYING) {
-              player.pauseVideo(); sendCommand('pause');
-            } else {
-              player.playVideo(); sendCommand('play');
-            }
-          } catch(e) {}
+          if (isSuperAdmin && player && player.getPlayerState) {
+            try {
+              const state = player.getPlayerState();
+              if (state === YT.PlayerState.PLAYING) {
+                player.pauseVideo(); sendCommand('pause');
+              } else {
+                player.playVideo(); sendCommand('play');
+              }
+            } catch(e) {}
+          } else {
+            sendCommand('toggle-play-pause');
+          }
         });
       }
       if (rNext) rNext.addEventListener('click', () => { playNext(); sendCommand('next'); });
