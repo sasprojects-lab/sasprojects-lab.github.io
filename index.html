@@ -4,58 +4,117 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SAS - Premium Player</title>
+  <title>SAS Studio Deck — Enterprise Master Control</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="sas-player-styles.css?v=19">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="sas-player-styles.css?v=21">
 </head>
 
 <body>
+  <!-- Dawn / Dusk Celestial Sky Transition Layer -->
   <div class="sky-transition" id="sky-transition">
     <div class="sky-gradient"></div>
     <div class="celestial-body"></div>
   </div>
 
-  <header>
-    <div class="header-inner">
+  <!-- Master Studio Header -->
+  <header class="master-header">
+    <div class="brand-section">
       <div class="logo">
         <img src="sas-player-logo-1.png" alt="SAS" class="logo-dark">
         <img src="sas-player-logo-light.png" alt="SAS" class="logo-light">
       </div>
-      <div class="header-actions">
-        <button class="theme-toggle" id="theme-toggle-btn" onclick="toggleTheme()" title="Switch dark/light mode">
-          <i class="fas fa-sun"></i>
-          <span>Light</span>
-        </button>
-        <button class="remote-access-btn" id="request-access-btn" onclick="openAccessModal()" title="Remote Control Access">
-          <i class="fas fa-wifi"></i>
-          <span>Remote</span>
-        </button>
-        <button class="admin-panel-btn" id="admin-panel-btn" onclick="openAdminPanel()" title="Super Admin Panel">
-          <i class="fas fa-user-shield"></i>
-          <span>Admin</span>
-          <span class="notif-dot"></span>
-        </button>
-        <div class="search-wrapper">
-          <div class="search-container">
-            <input type="text" id="link-input" placeholder="Paste one or more YouTube video links, or playlist link">
-            <button onclick="addLink()" title="Load links"><i class="fas fa-list-check"></i></button>
-          </div>
+      <div class="system-status-chip" id="system-status-chip" title="Real-time Network Telemetry">
+        <span class="status-pulse-dot"></span>
+        <span id="telemetry-status-text">RTDB: 12ms • Sync Active</span>
+      </div>
+    </div>
+
+    <!-- Center Search & Command Input -->
+    <div class="header-center-hub">
+      <div class="search-wrapper">
+        <div class="search-container">
+          <i class="fas fa-search search-icon-prefix"></i>
+          <input type="text" id="link-input" placeholder="Paste YouTube link or playlist (Ctrl+V)...">
+          <button onclick="addLink()" title="Load Links into Queue"><i class="fas fa-plus"></i></button>
         </div>
       </div>
     </div>
+
+    <!-- Header Actions -->
+    <div class="header-actions">
+
+      <button class="theme-toggle" id="theme-toggle-btn" onclick="toggleTheme()" title="Switch dark/light mode">
+        <i class="fas fa-sun"></i>
+        <span>Light</span>
+      </button>
+      <button class="remote-access-btn" id="request-access-btn" onclick="openAccessModal()" title="Remote Control Access">
+        <i class="fas fa-wifi"></i>
+        <span>Remote</span>
+      </button>
+      <button class="admin-panel-btn" id="admin-panel-btn" onclick="openAdminPanel()" title="Super Admin Panel">
+        <i class="fas fa-user-shield"></i>
+        <span>Admin</span>
+        <span class="notif-dot"></span>
+      </button>
+      <button class="pip-btn hidden" id="pip-btn" onclick="openMiniPlayer()" title="Floating Picture-in-Picture Mini Player">
+        <i class="fas fa-external-link-alt"></i>
+        <span>Pop Out</span>
+      </button>
+      <button class="install-btn hidden" id="install-app-btn" title="Install Web App">
+        <i class="fas fa-download"></i>
+      </button>
+    </div>
   </header>
 
-  <main>
-    <div class="content-area">
-      <div id="player-container">
-        <div id="yt-iframe"></div>
+  <!-- 3-Pane Master Dashboard Grid -->
+  <main class="studio-master-grid">
+
+    <!-- LEFT PANE: Queue & Media Management -->
+    <aside class="studio-pane queue-pane" id="playlist">
+      <div class="pane-header">
+        <div class="pane-title">
+          <i class="fas fa-list-ol"></i>
+          <span>Queue</span>
+        </div>
+        <div class="queue-actions">
+          <button onclick="loadDefaultPlaylistAction()" title="Restore default studio playlist" class="btn-restore-default"><i class="fas fa-undo"></i></button>
+          <button onclick="clearAllTracks()" title="Clear entire playlist"><i class="fas fa-trash-alt"></i></button>
+          <button onclick="clearPlayedTracks()" title="Remove tracks before current position"><i class="fas fa-broom"></i></button>
+        </div>
       </div>
-      <div class="controls-info">
-        <h2 id="current-title">Select a track to begin</h2>
-        <div class="autoplay-badge"><i class="fas fa-bolt"></i> Autoplay Enabled</div>
+
+      <!-- Filter Tabs -->
+      <div class="queue-filter-tabs">
+        <button class="queue-tab active" id="tab-all-queue"><i class="fas fa-layer-group"></i> All Queue</button>
+        <button class="queue-tab" id="tab-pinned"><i class="fas fa-thumbtack"></i> Pinned</button>
+        <button class="queue-tab" id="tab-requests"><i class="fas fa-satellite-dish"></i> Requests</button>
       </div>
-      
-      <!-- Live Status Bar -->
+
+      <!-- Scrollable Track List Container -->
+      <div class="queue-scrollable-list" id="track-list">
+        <!-- Rendered dynamically by initPlaylist() -->
+      </div>
+    </aside>
+
+    <!-- CENTER PANE: Acoustic Stage & Master Turntable -->
+    <section class="center-stage-pane" id="center-stage">
+
+      <!-- Video Cinema Container -->
+      <div class="stage-video-card">
+        <div class="video-backdrop-glow"></div>
+        <div class="stage-live-badge">
+          <span class="status-pulse-dot" style="background: var(--yt-red); box-shadow: 0 0 8px var(--yt-red);"></span>
+          <span>4K MASTER FEED</span>
+        </div>
+        <div id="player-container">
+          <div id="yt-iframe"></div>
+        </div>
+      </div>
+
+      <!-- Live Telemetry Status Bar -->
       <div class="live-status-bar" id="live-status-bar" style="display: none;">
         <div class="live-status-item">
           <i class="fas fa-play-circle"></i>
@@ -66,59 +125,126 @@
           <span id="live-status-volume">Volume: 100%</span>
         </div>
       </div>
-    </div>
 
-    <aside class="sidebar" id="playlist">
-      <div class="sidebar-header">
-        <div class="now-playing-label">Now Playing</div>
-        <div class="sidebar-track-title" id="sidebar-title">Select a track to begin</div>
-      </div>
-      <div class="queue-actions">
-        <button onclick="clearAllTracks()">Clear All</button>
-        <button onclick="clearPlayedTracks()">Clear Played</button>
-      </div>
-      <!-- Links will be populated here -->
-      <div id="track-list"></div>
-      <div class="disk-container">
-        <div class="disk" id="spinning-disk">
-          <svg class="disk-text" viewBox="0 0 100 100">
-            <defs>
-              <path id="circlePath" d="M 50, 50 m -35, 0 a 35,35 0 1,1 70,0 a 35,35 0 1,1 -70,0" />
-            </defs>
-            <text>
-              <textPath xlink:href="#circlePath">
-                SAS PREMIUM &bull; NOW PLAYING &bull; SAS PREMIUM &bull;
-              </textPath>
-            </text>
-          </svg>
-          <div class="disk-inner">
-            <button id="play-pause-btn">
-              <i class="fas fa-play"></i>
-            </button>
+      <!-- Master Vinyl Turntable Studio Deck -->
+      <div class="master-turntable-deck">
+        <div class="deck-top-row">
+
+          <!-- Flagship Spinning Vinyl Record -->
+          <div class="disk-container flagship-vinyl-wrapper">
+            <div class="ambient-acoustic-rings"></div>
+            <div class="disk flagship-vinyl-disk" id="spinning-disk" onclick="toggleMainPlayback()">
+              <svg class="disk-text vinyl-circular-svg" viewBox="0 0 100 100">
+                <defs>
+                  <path id="circlePath" d="M 50, 50 m -36, 0 a 36,36 0 1,1 72,0 a 36,36 0 1,1 -72,0" />
+                </defs>
+                <text>
+                  <textPath xlink:href="#circlePath">
+                    SAS PLAYER • SAS PLAYER • SAS PLAYER •
+                  </textPath>
+                </text>
+              </svg>
+              <div class="disk-inner vinyl-center-play-hub">
+                <button id="play-pause-btn" aria-label="Play or Pause">
+                  <i class="fas fa-play"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Track Telemetry Data Column -->
+          <div class="deck-track-telemetry">
+            <div class="deck-now-playing-label">
+              <i class="fas fa-broadcast-tower"></i> NOW BROADCASTING
+            </div>
+            <h2 class="deck-track-title" id="current-title">Select a track to begin</h2>
+            <div class="deck-track-artist" id="sidebar-title">44.1 kHz Hi-Fi YouTube Master Feed</div>
+
+            <!-- Equalizer Animated Waveform -->
+            <div class="audio-waveform-container" id="waveform-box">
+              <div class="waveform-bar"></div>
+              <div class="waveform-bar"></div>
+              <div class="waveform-bar"></div>
+              <div class="waveform-bar"></div>
+              <div class="waveform-bar"></div>
+              <div class="waveform-bar"></div>
+              <div class="waveform-bar"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Master Transport Toolbar -->
+        <div class="master-controls-toolbar">
+          <div class="transport-btn-cluster">
+            <button class="transport-btn" onclick="playPrev()" title="Previous Track"><i class="fas fa-step-backward"></i></button>
+            <button class="transport-btn primary-play" id="main-play-pause-btn" onclick="toggleMainPlayback()" title="Play / Pause"><i class="fas fa-play" id="main-play-pause-icon"></i></button>
+            <button class="transport-btn" onclick="playNext()" title="Next Track"><i class="fas fa-step-forward"></i></button>
+          </div>
+
+          <!-- Master Volume Slider -->
+          <div class="precision-volume-deck">
+            <i class="fas fa-volume-up"></i>
+            <input type="range" id="master-volume-slider" min="0" max="100" value="100" title="Master Volume" oninput="onMasterVolumeInput(this)">
+            <span id="master-volume-label" style="font-family: var(--font-mono); font-size: 11px;">100%</span>
           </div>
         </div>
       </div>
+
+    </section>
+
+    <!-- RIGHT PANE: Network Fleet & Telemetry Deck -->
+    <aside class="studio-pane fleet-pane">
+      <div class="pane-header">
+        <div class="pane-title">
+          <i class="fas fa-network-wired"></i>
+          <span>Connected Fleet (<span id="fleet-count-badge">1</span>)</span>
+        </div>
+        <div class="pane-controls">
+          <button class="pane-action-btn" title="Open Admin Panel" onclick="openAdminPanel()"><i class="fas fa-user-shield"></i></button>
+        </div>
+      </div>
+
+      <!-- Real-time Connected Device Fleet Cards -->
+      <div class="device-fleet-scroll-list" id="fleet-device-list">
+        <!-- Rendered dynamically from Firebase -->
+      </div>
+
+      <!-- Real-Time Activity Telemetry Stream -->
+      <div class="live-activity-stream-header">
+        <div class="stream-header-left">
+          <span class="live-radar-pulse"></span>
+          <span>Activity Radar</span>
+        </div>
+        <span class="event-live-pill" id="event-live-pill"><i class="fas fa-circle"></i> LIVE</span>
+      </div>
+      <div class="live-activity-stream" id="live-activity-stream">
+        <!-- Rendered dynamically with rich animated event cards -->
+      </div>
     </aside>
+
   </main>
 
-  <!-- Sticky Remote Toggle Button -->
+  <!-- Floating Live Broadcast Event Toast Notification Hub -->
+  <div class="event-toast-hub" id="event-toast-hub"></div>
+
+  <!-- Sticky Floating Remote Controller Button -->
   <button id="sticky-remote-btn" class="sticky-remote-btn hidden" onclick="toggleRemotePanel()" title="Open Remote Controller">
     <i class="fas fa-gamepad"></i>
   </button>
 
   <!-- Remote Control Floating Panel -->
   <div class="remote-control-panel hidden" id="remote-control-panel">
-    <div class="remote-panel-header" style="display: flex; justify-content: space-between; align-items: flex-start;">
-      <div>
+    <div class="remote-panel-header">
+      <div class="remote-header-info">
         <div class="remote-panel-title">
           <i class="fas fa-broadcast-tower"></i> Remote Controller
         </div>
-        <div class="remote-now-playing" style="margin-top: 4px;">
+        <div class="remote-now-playing">
           <span class="np-dot" id="remote-np-dot"></span>
           <span id="remote-now-playing-title">Select a track to begin</span>
         </div>
       </div>
-      <button onclick="toggleRemotePanel()" style="background: rgba(255,255,255,0.1); border: none; color: white; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; transition: 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'" title="Minimize">
+      <button class="remote-minimize-btn" id="remote-minimize-btn" onclick="toggleRemotePanel()" title="Minimize Remote Panel">
         <i class="fas fa-minus"></i>
       </button>
     </div>
@@ -173,6 +299,14 @@
           <!-- Rendered dynamically -->
         </div>
       </div>
+      <div class="modal-footer admin-panel-footer">
+        <button class="btn-danger-outline hidden" id="clear-all-devices-btn" onclick="clearAllOtherDevices()" title="Remove all other device entries from the list">
+          <i class="fas fa-trash-alt"></i> Clear All Others
+        </button>
+        <button class="btn-secondary" onclick="logoutAdmin()">
+          <i class="fas fa-sign-out-alt"></i> Logout
+        </button>
+      </div>
     </div>
   </div>
 
@@ -185,7 +319,7 @@
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
   <script src="https://www.youtube.com/iframe_api"></script>
-  <script src="sas-player-script.js?v=17"></script>
+  <script src="sas-player-script.js?v=20"></script>
 </body>
 
 </html>
