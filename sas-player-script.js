@@ -1,3 +1,8 @@
+// =========================================================================
+//  SAS PLAYER — APP VERSION (used for cache busting & version enforcement)
+// =========================================================================
+const APP_VERSION = '3.1.4';
+
 // Default Studio Playlist
 const DEFAULT_TRACKS = [
   { id: 'byitAI7kkOM', title: 'Armaan Malik - Dil Mein Ho Tum', addedByName: 'Super Admin', isPinned: false },
@@ -21,6 +26,12 @@ const DEFAULT_TRACKS = [
 let videoLinks = JSON.parse(JSON.stringify(DEFAULT_TRACKS));
 
 let player;
+let isPlayerReady = false;
+let lastLoadedVideoId = '';
+let pendingVideoId = null;
+let pendingIsPlaying = false;
+let pendingStartSeconds = 0;
+let timeSyncInterval = null;
 let currentIndex = 0;
 let usingYouTubePlaylist = false;
 let pendingCommandIssuer = null;
@@ -34,6 +45,9 @@ let dragFromIndex = -1;
 let isLightMode = false;
 let isThemeAnimating = false;
 let shouldResumeOnFocus = false;
+let expectedPlaybackState = null; // 'playing' | 'paused' | null — for health check recovery
+let healthCheckInterval = null;
+let heartbeatInterval = null;
 let activeQueueFilter = 'all'; // 'all', 'pinned', 'requests'
 
 const disk = document.getElementById('spinning-disk');
@@ -88,20 +102,20 @@ async function toggleTheme() {
     themeToggleBtn.disabled = false;
   }
   isThemeAnimating = false;
-  logActivity('Switched theme to ' + (isLightMode ? 'Light mode' : 'Dark obsidian'));
+  logActivity('Switched theme to ' + (isLightMode ? 'Light mode' : 'Dark obsidian'), 'info', /* forceBroadcast= */ false);
 }
 
 // Activity & Telemetry Realtime Stream
 const EVENT_ICONS = {
-  play:   { icon: 'fa-play', cls: 'type-play' },
-  pause:  { icon: 'fa-pause', cls: 'type-pause' },
-  skip:   { icon: 'fa-forward', cls: 'type-skip' },
+  play: { icon: 'fa-play', cls: 'type-play' },
+  pause: { icon: 'fa-pause', cls: 'type-pause' },
+  skip: { icon: 'fa-forward', cls: 'type-skip' },
   volume: { icon: 'fa-volume-up', cls: 'type-volume' },
-  pin:    { icon: 'fa-thumbtack', cls: 'type-pin' },
-  add:    { icon: 'fa-plus-circle', cls: 'type-add' },
-  admin:  { icon: 'fa-shield-alt', cls: 'type-admin' },
-  clear:  { icon: 'fa-trash-alt', cls: 'type-clear' },
-  info:   { icon: 'fa-bolt', cls: 'type-skip' }
+  pin: { icon: 'fa-thumbtack', cls: 'type-pin' },
+  add: { icon: 'fa-plus-circle', cls: 'type-add' },
+  admin: { icon: 'fa-shield-alt', cls: 'type-admin' },
+  clear: { icon: 'fa-trash-alt', cls: 'type-clear' },
+  info: { icon: 'fa-bolt', cls: 'type-skip' }
 };
 
 const PAGE_BOOT_TIME = Date.now();
@@ -212,7 +226,7 @@ function showEventToast(ev) {
 function listenToLiveEvents() {
   if (!db) return;
   const eventsRef = db.ref(DB_ROOT + '/events');
-  
+
   eventsRef.limitToLast(12).on('child_added', (snap) => {
     const ev = snap.val();
     if (!ev) return;
@@ -224,21 +238,97 @@ function listenToLiveEvents() {
 
 // Initialize YouTube Player
 function onYouTubeIframeAPIReady() {
+  const initialId = (lastNowPlayingData && lastNowPlayingData.videoId)
+    ? lastNowPlayingData.videoId
+    : (pendingVideoId || (videoLinks[currentIndex] ? videoLinks[currentIndex].id : 'byitAI7kkOM'));
+  const savedRole = localStorage.getItem('sas_user_role');
+  const isSuper = (savedRole === 'super_admin');
+
+  // For non-super-admin devices: if we already have the host's now-playing
+  // data at this point (e.g. on a page refresh, once the nowPlaying listener's
+  // first snapshot has already arrived), work out the real elapsed playback
+  // position up front. Otherwise the iframe always starts loading at 0:00 and
+  // the video visibly "restarts from the beginning" every time, only catching
+  // up later via drift correction instead of loading in the right place immediately.
+  let initialStartSeconds = 0;
+  if (!isSuper && lastNowPlayingData && lastNowPlayingData.videoId === initialId) {
+    initialStartSeconds = (typeof lastNowPlayingData.currentTime === 'number') ? lastNowPlayingData.currentTime : 0;
+    if (lastNowPlayingData.isPlaying && lastNowPlayingData.timestamp) {
+      const elapsed = (Date.now() - lastNowPlayingData.timestamp) / 1000;
+      if (elapsed > 0 && elapsed < 600) initialStartSeconds += elapsed;
+    }
+  }
+
   player = new YT.Player('yt-iframe', {
     height: '100%',
     width: '100%',
-    videoId: videoLinks[0] ? videoLinks[0].id : 'byitAI7kkOM',
+    videoId: initialId,
     playerVars: {
-      'autoplay': 0,
-      'controls': 1,
+      'autoplay': isSuper ? 0 : 1,
+      'mute': isSuper ? 0 : 1,
+      'start': Math.floor(initialStartSeconds),
+      'controls': 0,
       'rel': 0,
       'playsinline': 1,
-      'enablejsapi': 1
+      'enablejsapi': 1,
+      'disablekb': 1,
+      'iv_load_policy': 3,
+      'modestbranding': 1
     },
     events: {
-      'onStateChange': onPlayerStateChange
+      'onReady': onPlayerReady,
+      'onStateChange': onPlayerStateChange,
+      'onError': (e) => {
+        console.warn('[SAS Player] YT Player Error:', e.data);
+      }
     }
   });
+}
+
+function onPlayerReady(event) {
+  isPlayerReady = true;
+  // Non-super-admin devices must be muted so browsers permit programmatic autoplay without audio echo
+  if (!isSuperAdmin && player && typeof player.mute === 'function') {
+    player.mute();
+  }
+
+  // If now-playing state is already available from Firebase, apply immediately
+  if (lastNowPlayingData && !isSuperAdmin) {
+    applyNowPlayingUI(lastNowPlayingData);
+  } else if (pendingVideoId) {
+    if (isSuperAdmin) {
+      if (player && player.loadVideoById) {
+        player.loadVideoById(pendingVideoId, pendingStartSeconds || 0);
+      }
+    } else {
+      if (player && typeof player.mute === 'function') player.mute();
+      if (pendingIsPlaying) {
+        if (player && player.loadVideoById) {
+          player.loadVideoById({
+            videoId: pendingVideoId,
+            startSeconds: Math.floor(pendingStartSeconds || 0)
+          });
+          if (pendingStartSeconds > 1) {
+            setTimeout(() => {
+              try {
+                if (player && typeof player.seekTo === 'function') player.seekTo(pendingStartSeconds, true);
+              } catch (_) { }
+            }, 400);
+          }
+        }
+      } else {
+        if (player && player.cueVideoById) {
+          player.cueVideoById({
+            videoId: pendingVideoId,
+            startSeconds: Math.floor(pendingStartSeconds || 0)
+          });
+        }
+      }
+    }
+    lastLoadedVideoId = pendingVideoId;
+    pendingVideoId = null;
+    pendingStartSeconds = 0;
+  }
 }
 
 function insertTrack(rawInput, addedByActor = null) {
@@ -382,20 +472,38 @@ function updatePlaybackUIState(isPlaying, title = null, trackIndex = null) {
 
 // Master Playback State Handler (Fired on Super Admin Host PC)
 function onPlayerStateChange(event) {
+  // Non-super-admin devices display video visually but do NOT broadcast or control queue
+  if (!isSuperAdmin) {
+    if (player && typeof player.mute === 'function' && player.isMuted && !player.isMuted()) {
+      player.mute();
+    }
+    return;
+  }
+
   const isPlaying = event.data == YT.PlayerState.PLAYING;
-  
+
   lastCommandIssuer = pendingCommandIssuer || deviceId;
   pendingCommandIssuer = null;
 
-  // Always get the real title from the YouTube player (handles track changes)
+  // Always get the real title and video ID from the YouTube player (handles track changes)
   let curTitle = '';
+  let curVideoId = '';
   if (player && player.getVideoData) {
     const vd = player.getVideoData();
     curTitle = (vd && vd.title) ? vd.title.trim() : '';
+    curVideoId = (vd && vd.video_id) ? vd.video_id : '';
   }
   if (!curTitle) {
     const titleEl = document.getElementById('current-title');
     curTitle = titleEl ? titleEl.innerText : 'SAS Player';
+  }
+
+  // Update currentIndex to match the real video ID currently in the player
+  if (curVideoId) {
+    const matchedIdx = videoLinks.findIndex((v) => v.id === curVideoId);
+    if (matchedIdx !== -1) {
+      currentIndex = matchedIdx;
+    }
   }
 
   // Update local video title cache for currently playing track
@@ -414,6 +522,13 @@ function onPlayerStateChange(event) {
   // Broadcast state to remote devices with the real current title
   if (typeof broadcastNowPlaying === 'function') {
     broadcastNowPlaying(curTitle, isPlaying);
+  }
+
+  // Track expected playback state for health check recovery
+  if (isPlaying) {
+    expectedPlaybackState = 'playing';
+  } else if (event.data == YT.PlayerState.PAUSED) {
+    expectedPlaybackState = 'paused';
   }
 
   // Autoplay next track on end
@@ -439,11 +554,26 @@ function playNext() {
     if (currentIndex < videoLinks.length) {
       loadVideo(currentIndex);
     } else {
-      currentIndex = videoLinks.length - 1;
+      // End of playlist — loop back to the first track
+      currentIndex = 0;
+      loadVideo(0);
+      logActivity('Playlist looped back to start', 'info');
     }
     logActivity('Skipped to next track', 'skip');
   } else {
     sendCommand('next');
+    // Update local index/title for instant UI feedback only — do NOT touch the
+    // actual player or lastLoadedVideoId here. The real video load must come
+    // exclusively from the authoritative Firebase nowPlaying sync (applyNowPlayingUI),
+    // otherwise lastLoadedVideoId gets set to a guess that can mismatch the host's
+    // real track and permanently blocks the video from reloading (it looks like
+    // "same video, skip reload" even though the visible video is stale).
+    currentIndex = (currentIndex + 1 < videoLinks.length) ? currentIndex + 1 : 0;
+    const nextVideo = videoLinks[currentIndex];
+    if (nextVideo) {
+      updateDisplayTitle(nextVideo.title);
+      updatePlaylistUI();
+    }
     logActivity('Skipped to next track', 'skip');
   }
 }
@@ -469,6 +599,15 @@ function playPrev() {
     logActivity('Returned to previous track', 'skip');
   } else {
     sendCommand('prev');
+    // See note in playNext(): no local player.loadVideoById here. The video
+    // must only ever be loaded by applyNowPlayingUI() from the real Firebase
+    // state, so lastLoadedVideoId stays accurate and the video actually syncs.
+    currentIndex = (currentIndex - 1 >= 0) ? currentIndex - 1 : 0;
+    const prevVideo = videoLinks[currentIndex];
+    if (prevVideo) {
+      updateDisplayTitle(prevVideo.title);
+      updatePlaylistUI();
+    }
     logActivity('Returned to previous track', 'skip');
   }
 }
@@ -489,6 +628,14 @@ function toggleMainPlayback() {
     const isPlaying = lastNowPlayingData ? lastNowPlayingData.isPlaying : (disk && disk.classList.contains('playing'));
     const willPlay = !isPlaying;
     sendCommand(willPlay ? 'play' : 'pause');
+    if (player) {
+      if (willPlay && typeof player.playVideo === 'function') {
+        if (player.mute) player.mute();
+        player.playVideo();
+      } else if (!willPlay && typeof player.pauseVideo === 'function') {
+        player.pauseVideo();
+      }
+    }
     logActivity(willPlay ? 'Resumed master playback' : 'Paused master playback', willPlay ? 'play' : 'pause');
   }
 }
@@ -496,7 +643,7 @@ function toggleMainPlayback() {
 let volumeLogTimeout = null;
 function syncVolume(level, broadcast = true) {
   const vol = Math.max(0, Math.min(100, parseInt(level, 10) || 0));
-  
+
   // 1. Master Deck Volume Slider & Label
   const masterSlider = document.getElementById('master-volume-slider');
   if (masterSlider) masterSlider.value = vol;
@@ -540,6 +687,12 @@ function loadVideo(index) {
     player.loadVideoById(video.id);
   } else if (!isSuperAdmin) {
     sendCommand('play-video', { videoId: video.id, index });
+    // No local loadVideoById here — same reasoning as playNext()/playPrev():
+    // letting the admin load a guessed video locally sets lastLoadedVideoId
+    // out from under the real Firebase nowPlaying sync, which then thinks the
+    // correct video is "already loaded" and skips reloading it. The video
+    // will load a moment later via applyNowPlayingUI() once the host's
+    // nowPlaying broadcast comes back, which is what keeps it actually synced.
   }
   updateDisplayTitle(video.title);
   updatePlaylistUI();
@@ -604,7 +757,7 @@ function loadCustomQueue(tracks, startIndex = 0) {
     const addedByName = (typeof track === 'string') ? '' : track.addedByName || '';
     return { id, title, addedByName };
   });
-  
+
   const ids = videoLinks.map(v => v.id);
   currentIndex = Math.max(0, Math.min(startIndex, videoLinks.length - 1));
   initPlaylist();
@@ -639,10 +792,10 @@ function loadCustomQueueSilent(tracks, startIndex = 0) {
   activePlaylistId = '';
   activePlaylistTitle = '';
   const wasEmpty = videoLinks.length === 0;
-  videoLinks = tracks.map((track) => ({ 
-    id: track.id || track, 
-    title: track.title || knownTitles[track.id || track] || '', 
-    addedByName: track.addedByName || '' 
+  videoLinks = tracks.map((track) => ({
+    id: track.id || track,
+    title: track.title || knownTitles[track.id || track] || '',
+    addedByName: track.addedByName || ''
   }));
 
   currentIndex = Math.max(0, Math.min(currentIndex, videoLinks.length - 1));
@@ -702,7 +855,7 @@ function initPlaylist() {
   if (renderedCount === 0) {
     const helper = document.createElement('div');
     helper.className = 'track-card';
-    const msg = activeQueueFilter === 'pinned' 
+    const msg = activeQueueFilter === 'pinned'
       ? 'No pinned tracks yet. Click the <i class="fas fa-thumbtack"></i> icon on any track to pin it.'
       : 'No remote guest requests yet.';
     helper.innerHTML = `<div class="track-details-col"><span class="track-title-text" style="color: var(--text-muted); font-size:12px;">${msg}</span></div>`;
@@ -790,7 +943,7 @@ async function hydrateVideoTitles() {
 
   await Promise.all(tasks);
   initPlaylist();
-  
+
   // If the current display title is empty or says 'Queue cleared' but we have songs, update it!
   const currentTitleEl = document.getElementById('current-title');
   const curDisplay = currentTitleEl ? currentTitleEl.innerText.trim() : '';
@@ -811,11 +964,11 @@ function createTrackItem(link, index, isActive) {
   div.dataset.trackIndex = index;
   div.draggable = !usingYouTubePlaylist;
 
-  const addedBy = link.addedByName || 'Super Admin';
+  const addedBy = link.addedByName || 'Unknown';
   const isHost = addedBy.includes('Super Admin') || addedBy.includes('Host');
   const isPinned = !!link.isPinned;
-  const tagHtml = isPinned 
-    ? `<span class="pinned-tag"><i class="fas fa-thumbtack"></i> PINNED</span>` 
+  const tagHtml = isPinned
+    ? `<span class="pinned-tag"><i class="fas fa-thumbtack"></i> PINNED</span>`
     : `<span class="added-by-tag ${isHost ? 'super-admin' : ''}">${escapeHtml(addedBy)}</span>`;
   const titleText = link.title || 'Loading track title...';
 
@@ -892,6 +1045,7 @@ function removeTrack(index) {
 }
 
 function clearAllTracks() {
+  if (!isAuthorizedUser()) return;
   videoLinks = [];
   currentIndex = 0;
   usingYouTubePlaylist = false;
@@ -906,17 +1060,18 @@ function clearAllTracks() {
 }
 
 function loadDefaultPlaylistAction() {
+  if (!isAuthorizedUser()) return;
   videoLinks = JSON.parse(JSON.stringify(DEFAULT_TRACKS));
   currentIndex = 0;
   usingYouTubePlaylist = false;
   activePlaylistId = '';
   activePlaylistTitle = '';
-  
+
   initPlaylist();
   updatePlaylistUI();
   hydrateVideoTitles();
   broadcastPlaylist();
-  
+
   const initialTitle = videoLinks[0].title || 'Armaan Malik - Dil Mein Ho Tum';
   updateDisplayTitle(initialTitle, /* broadcast= */ true);
 
@@ -930,6 +1085,7 @@ function loadDefaultPlaylistAction() {
 }
 
 function clearPlayedTracks() {
+  if (!isAuthorizedUser()) return;
   if (videoLinks.length === 0 || currentIndex <= 0) return;
   const removedCount = currentIndex;
   videoLinks = videoLinks.slice(currentIndex);
@@ -1040,7 +1196,7 @@ function getBrowserDeviceName() {
 
 function getDeviceName(id) {
   const targetId = id || deviceId;
-  
+
   if (targetId === deviceId) {
     const custom = localStorage.getItem('sas_device_name');
     if (custom) return custom;
@@ -1095,13 +1251,14 @@ function initFirebase() {
     });
 
     const savedRole = localStorage.getItem('sas_user_role');
-    if (savedRole === 'super_admin') {
-      isSuperAdmin = true;
-      isAdmin = true;
-      currentUserRole = 'super_admin';
-    } else if (savedRole === 'admin') {
-      isAdmin = true;
-      currentUserRole = 'admin';
+    // SECURITY: localStorage is fully attacker-controlled (anyone can set it via
+    // devtools). It must NEVER be trusted to grant real privilege flags on its
+    // own — it's only used here as a cosmetic label so the UI doesn't flash
+    // "guest" for a split second. isAdmin/isSuperAdmin are only ever flipped to
+    // true inside listenToDeviceStatus(), once Firebase's own device record
+    // (the actual source of truth) confirms the role.
+    if (savedRole === 'super_admin' || savedRole === 'admin') {
+      currentUserRole = savedRole;
     }
 
     listenToDeviceStatus();
@@ -1112,10 +1269,17 @@ function initFirebase() {
     listenToLiveEvents();
     showConnectionBadge('connected');
 
-    if (isAdmin || isSuperAdmin) {
-      activateRoleMode(currentUserRole, /* skipBroadcast= */ true);
-      setTimeout(syncInitialState, 800);
-    }
+    // NOTE: activation for returning admins/super-admins now happens inside
+    // listenToDeviceStatus() itself, the moment Firebase's real device record
+    // confirms the role — never eagerly from localStorage (see note above).
+
+    // Version enforcement: check against Firebase required version
+
+    enforceAppVersion();
+
+    // Populate version badge in navbar
+    const versionBadge = document.getElementById('app-version-badge');
+    if (versionBadge) versionBadge.textContent = 'v' + APP_VERSION;
   } catch (err) {
     console.error('Firebase error:', err);
     showConnectionBadge('error');
@@ -1124,17 +1288,38 @@ function initFirebase() {
 
 function listenToDeviceStatus() {
   if (!db || !deviceId) return;
+  let roleConfirmedOnce = false;
   db.ref(DB_ROOT + '/devices/' + deviceId).on('value', (snap) => {
     const data = snap.val();
     const newStatus = data ? data.status : 'unknown';
     const newRole = data ? (data.role || 'guest') : 'guest';
 
+    // SECURITY: Firebase's own record for this device is the ONLY source of
+    // truth for privilege flags. This branch both promotes AND demotes —
+    // previously it only ever promoted, which meant a role flipped on via a
+    // tampered localStorage value at page load was never corrected back down.
     if (newRole === 'super_admin' || newRole === 'admin') {
+      const wasElevated = isAdmin || isSuperAdmin;
       isAdmin = true;
       isSuperAdmin = (newRole === 'super_admin');
       currentUserRole = newRole;
       localStorage.setItem('sas_user_role', newRole);
+      if (!wasElevated || !roleConfirmedOnce) {
+        // First confirmation this session (e.g. a returning admin reloading
+        // the page) — run full activation (unmute policy, time-sync, presence).
+        activateRoleMode(newRole, /* skipBroadcast= */ true);
+        setTimeout(syncInitialState, 800);
+      }
+    } else {
+      if (isAdmin || isSuperAdmin) {
+        console.warn('[SAS Security] Firebase device record no longer grants elevated role — revoking locally');
+      }
+      isAdmin = false;
+      isSuperAdmin = false;
+      currentUserRole = 'guest';
+      localStorage.removeItem('sas_user_role');
     }
+    roleConfirmedOnce = true;
 
     deviceStatus = newStatus;
     if (newStatus === 'approved' || isAdmin || isSuperAdmin) {
@@ -1142,6 +1327,7 @@ function listenToDeviceStatus() {
       syncInitialState();
     }
     updateAccessUI(deviceStatus);
+    updateControlAccessUI();
   });
 }
 
@@ -1190,6 +1376,96 @@ function applyNowPlayingUI(data) {
   }
 
   updatePlaybackUIState(isPlaying, title, data.trackIndex);
+
+  // Synchronize video feed for non-super-admin (clients / admins)
+  if (!isSuperAdmin) {
+    const targetVideoId = data.videoId || (videoLinks[data.trackIndex] ? videoLinks[data.trackIndex].id : null);
+    if (targetVideoId) {
+      // Calculate target position in seconds taking network transit time into account
+      let targetPosition = typeof data.currentTime === 'number' ? data.currentTime : 0;
+      if (data.isPlaying && data.timestamp) {
+        const elapsed = (Date.now() - data.timestamp) / 1000;
+        if (elapsed > 0 && elapsed < 600) {
+          targetPosition += elapsed;
+        }
+      }
+
+      if (player && typeof player.loadVideoById === 'function') {
+        if (player.mute && player.isMuted && !player.isMuted()) {
+          player.mute();
+        }
+
+        // Determine what video is currently loaded in the YouTube player
+        let currentLoadedId = '';
+        if (typeof player.getVideoData === 'function') {
+          const vd = player.getVideoData();
+          if (vd && vd.video_id) currentLoadedId = vd.video_id;
+        }
+        if (!currentLoadedId) currentLoadedId = lastLoadedVideoId;
+
+        const isDifferentVideo = (currentLoadedId !== targetVideoId);
+
+        if (isDifferentVideo) {
+          lastLoadedVideoId = targetVideoId;
+          if (player.mute) player.mute();
+          if (isPlaying) {
+            player.loadVideoById({
+              videoId: targetVideoId,
+              startSeconds: Math.floor(targetPosition)
+            });
+            if (targetPosition > 1) {
+              setTimeout(() => {
+                try {
+                  if (player && typeof player.seekTo === 'function') player.seekTo(targetPosition, true);
+                } catch (_) { }
+              }, 400);
+            }
+          } else {
+            player.cueVideoById({
+              videoId: targetVideoId,
+              startSeconds: Math.floor(targetPosition)
+            });
+          }
+        } else {
+          // Same video: NEVER reload or cue! Only synchronize play/pause state.
+          const playerState = (typeof player.getPlayerState === 'function') ? player.getPlayerState() : -1;
+
+          if (isPlaying) {
+            if (playerState !== YT.PlayerState.PLAYING && playerState !== YT.PlayerState.BUFFERING) {
+              if (player.mute) player.mute();
+              player.playVideo();
+            }
+
+            // Frame-accurate synchronization: correct drift whenever we're
+            // supposed to be playing, regardless of the exact reported state.
+            // Gating this on playerState === PLAYING meant a device stuck at
+            // 0:00 (autoplay hiccup, still buffering/cued, etc.) never got
+            // nudged to the right position — it just sat there showing the
+            // start of the track until it happened to reach PLAYING on its
+            // own, which could take a while or never fully catch up.
+            if (typeof player.getCurrentTime === 'function' && typeof player.seekTo === 'function') {
+              const curTime = player.getCurrentTime();
+              if (typeof curTime === 'number') {
+                const drift = Math.abs(curTime - targetPosition);
+                if (drift > 3.0) {
+                  player.seekTo(targetPosition, true);
+                }
+              }
+            }
+          } else {
+            if (playerState !== YT.PlayerState.PAUSED && playerState !== YT.PlayerState.CUED) {
+              player.pauseVideo();
+            }
+          }
+        }
+      } else {
+        // Player not ready yet — queue target video and start timestamp for onPlayerReady
+        pendingVideoId = targetVideoId;
+        pendingIsPlaying = isPlaying;
+        pendingStartSeconds = targetPosition;
+      }
+    }
+  }
 }
 
 function listenToVolume() {
@@ -1228,9 +1504,18 @@ function applyRemoteCommand(cmd) {
       break;
     case 'play-video':
       if (cmd.data && cmd.data.videoId) {
+        // Update currentIndex so nowPlaying broadcast has the correct track
+        if (typeof cmd.data.index === 'number') {
+          currentIndex = cmd.data.index;
+        }
         if (isSuperAdmin && player && player.loadVideoById) {
           player.loadVideoById(cmd.data.videoId);
         }
+        // Update display title from playlist data
+        if (videoLinks[currentIndex]) {
+          updateDisplayTitle(videoLinks[currentIndex].title || 'Loading track title...');
+        }
+        updatePlaylistUI();
       }
       break;
     case 'volume':
@@ -1272,13 +1557,40 @@ function sendCommand(command, data) {
 
 function broadcastNowPlaying(title, isPlaying) {
   if (!db || !deviceId) return;
-  if (!isAuthorizedUser()) return;
-  const currentVideoId = videoLinks[currentIndex] ? videoLinks[currentIndex].id : '';
+  if (!isSuperAdmin) return; // Strict: Only Super Admin host can broadcast now-playing state
+
+  let curVideoId = '';
+  let curTime = 0;
+  if (player) {
+    if (typeof player.getVideoData === 'function') {
+      const vd = player.getVideoData();
+      if (vd && vd.video_id) curVideoId = vd.video_id;
+    }
+    if (typeof player.getCurrentTime === 'function') {
+      curTime = player.getCurrentTime() || 0;
+    }
+  }
+  if (!curVideoId && videoLinks[currentIndex]) {
+    curVideoId = videoLinks[currentIndex].id;
+  }
+
+  // Ensure currentIndex matches the real playing video in videoLinks
+  if (curVideoId) {
+    const matchedIdx = videoLinks.findIndex((v) => v.id === curVideoId);
+    if (matchedIdx !== -1) {
+      currentIndex = matchedIdx;
+    }
+  }
+
+  const broadcastTitle = title || (videoLinks[currentIndex] ? videoLinks[currentIndex].title : '') || 'SAS Player';
+
   db.ref(DB_ROOT + '/nowPlaying').set({
-    title: title || '',
+    title: broadcastTitle,
     isPlaying: !!isPlaying,
     trackIndex: currentIndex,
-    videoId: currentVideoId,
+    videoId: curVideoId,
+    currentTime: Math.round(curTime * 10) / 10,
+    timestamp: Date.now(),
     updatedAt: Date.now(),
     updatedBy: lastCommandIssuer || deviceId
   });
@@ -1392,6 +1704,7 @@ function showConnectionBadge(status) {
 function updateAccessUI(status) {
   const btn = document.getElementById('request-access-btn');
   const panel = document.getElementById('remote-control-panel');
+  updateControlAccessUI();
   if (!btn) return;
 
   btn.classList.remove('pending', 'revoked');
@@ -1412,11 +1725,53 @@ function updateAccessUI(status) {
   }
 }
 
+// Locks the real playback/queue controls in the DOM for anyone who isn't an
+// authorized device (approved guest, admin, or super admin). This is a UX
+// safety net, not the actual security boundary — the real enforcement is the
+// isAuthorizedUser()/isAdmin gates already in sendCommand(), broadcastPlaylist(),
+// broadcastNowPlaying(), and the queue-management functions. Locking the UI
+// just stops unauthorized visitors from clicking things that will silently
+// no-op, which was confusing.
+function updateControlAccessUI() {
+  const authorized = isAuthorizedUser();
+  const selectors = [
+    '#link-input', '#remote-link-input',
+    '#master-volume-slider', '#remote-volume-slider',
+    '.transport-btn', '.remote-btn',
+    '.queue-actions button',
+    '#play-pause-btn', '#remote-add-btn'
+  ];
+  document.querySelectorAll(selectors.join(',')).forEach((el) => {
+    el.disabled = !authorized;
+    el.style.opacity = authorized ? '' : '0.4';
+    el.style.cursor = authorized ? '' : 'not-allowed';
+  });
+  const disk = document.getElementById('spinning-disk');
+  if (disk) disk.style.cursor = authorized ? 'pointer' : 'not-allowed';
+}
+
 function activateRoleMode(role, skipBroadcast = false) {
   currentUserRole = role;
   isAdmin = (role === 'admin' || role === 'super_admin');
   isSuperAdmin = (role === 'super_admin');
   localStorage.setItem('sas_user_role', role);
+
+  // Audio output policy: super admin hosts audio output; non-super-admin remains muted
+  if (player) {
+    if (isSuperAdmin && typeof player.unMute === 'function') {
+      player.unMute();
+    } else if (!isSuperAdmin && typeof player.mute === 'function') {
+      player.mute();
+    }
+  }
+
+  // Time-sync service: super admin broadcasts high-precision timestamps
+  if (isSuperAdmin) {
+    startTimeSync();
+  } else if (timeSyncInterval) {
+    clearInterval(timeSyncInterval);
+    timeSyncInterval = null;
+  }
 
   const defaultName = isSuperAdmin ? 'Super Admin' : 'Admin';
   const deviceName = localStorage.getItem('sas_device_name') || defaultName;
@@ -1455,7 +1810,7 @@ function renderAdminDeviceList(devices) {
   const fleetEl = document.getElementById('fleet-device-list');
   const fleetCountEl = document.getElementById('fleet-count-badge');
   const entries = Object.entries(devices || {});
-  
+
   // Unauthorized guests only see their isolated local player in the fleet deck
   if (!isAuthorizedUser()) {
     if (fleetCountEl) fleetCountEl.textContent = '1';
@@ -1664,7 +2019,7 @@ function toggleRemotePanel() {
   const panel = document.getElementById('remote-control-panel');
   const stickyBtn = document.getElementById('sticky-remote-btn');
   if (!panel || !stickyBtn) return;
-  
+
   if (remotePanelMinimized) {
     panel.classList.remove('hidden');
     stickyBtn.classList.add('hidden');
@@ -1678,7 +2033,7 @@ function toggleRemotePanel() {
 
 async function hashPassphrase(str) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
-  return Array.prototype.map.call(new Uint8Array(buf), x=>(('00'+x.toString(16)).slice(-2))).join('');
+  return Array.prototype.map.call(new Uint8Array(buf), x => (('00' + x.toString(16)).slice(-2))).join('');
 }
 
 async function openAdminPanel() {
@@ -1803,7 +2158,7 @@ async function openMiniPlayer() {
           link.href = sheet.href;
           _pipWindow.document.head.appendChild(link);
         }
-      } catch (_) {}
+      } catch (_) { }
     });
 
     const currentTitle = document.getElementById('current-title').innerText || 'SAS Player';
@@ -1827,12 +2182,224 @@ async function openMiniPlayer() {
   }
 }
 
+// =========================================================================
+//  VISIBILITY RECOVERY & PLAYER HEALTH CHECK (Issue 1)
+// =========================================================================
+
+// When the super admin's screen turns off or tab is backgrounded, the YT player
+// silently suspends. This system detects when visibility returns and auto-recovers.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && isSuperAdmin && player) {
+    // Screen just woke up — check if player needs recovery
+    setTimeout(() => {
+      if (!player || !player.getPlayerState) return;
+      const currentState = player.getPlayerState();
+
+      // If we expected playing but player is paused/unstarted/cued, auto-resume
+      if (expectedPlaybackState === 'playing' &&
+        currentState !== YT.PlayerState.PLAYING &&
+        currentState !== YT.PlayerState.BUFFERING) {
+        console.log('[SAS Recovery] Visibility restored — resuming frozen playback');
+        player.playVideo();
+        logActivity('Auto-recovered playback after screen wake', 'play', /* forceBroadcast= */ false);
+      }
+
+      // Re-broadcast current state so remote clients get fresh data
+      const vd = player.getVideoData && player.getVideoData();
+      const title = (vd && vd.title) ? vd.title.trim() : (document.getElementById('current-title')?.innerText || '');
+      broadcastNowPlaying(title, player.getPlayerState() === YT.PlayerState.PLAYING);
+    }, 500); // Small delay to let the player iframe reactivate
+  }
+});
+
+function startPlayerHealthCheck() {
+  if (healthCheckInterval) clearInterval(healthCheckInterval);
+  if (!isSuperAdmin) return;
+
+  healthCheckInterval = setInterval(() => {
+    if (!player || !player.getPlayerState || !isSuperAdmin) return;
+
+    const currentState = player.getPlayerState();
+
+    // If we expected playing but player is frozen (paused/unstarted/cued and NOT ended)
+    if (expectedPlaybackState === 'playing' &&
+      currentState !== YT.PlayerState.PLAYING &&
+      currentState !== YT.PlayerState.BUFFERING &&
+      currentState !== YT.PlayerState.ENDED) {
+      console.log('[SAS HealthCheck] Player desync detected — expected playing, got state:', currentState);
+      player.playVideo();
+    }
+  }, 15000); // Every 15 seconds
+}
+
+function startHeartbeat() {
+  if (heartbeatInterval) clearInterval(heartbeatInterval);
+  if (!isSuperAdmin || !db) return;
+
+  // Write heartbeat immediately, then every 30 seconds
+  const writeHeartbeat = () => {
+    db.ref(DB_ROOT + '/heartbeat').set({
+      timestamp: Date.now(),
+      deviceId: deviceId,
+      version: APP_VERSION
+    });
+  };
+
+  writeHeartbeat();
+  heartbeatInterval = setInterval(writeHeartbeat, 30000);
+}
+
+// Time-sync broadcaster (Super Admin -> All Remotes)
+function startTimeSync() {
+  if (timeSyncInterval) clearInterval(timeSyncInterval);
+  if (!isSuperAdmin) return;
+
+  timeSyncInterval = setInterval(() => {
+    if (!isSuperAdmin || !player || typeof player.getPlayerState !== 'function') return;
+    const state = player.getPlayerState();
+    if (state === YT.PlayerState.PLAYING) {
+      const curTitle = document.getElementById('current-title')?.innerText || '';
+      broadcastNowPlaying(curTitle, true);
+    }
+  }, 3000);
+}
+
+// =========================================================================
+//  VERSION ENFORCEMENT (Issue 6)
+// =========================================================================
+
+function enforceAppVersion() {
+  if (!db) return;
+
+  // Super admin publishes the current required version
+  if (isSuperAdmin) {
+    db.ref(DB_ROOT + '/appVersion').set({
+      version: APP_VERSION,
+      updatedAt: Date.now()
+    });
+  }
+
+  // ALL clients listen for version changes and force-reload if outdated
+  db.ref(DB_ROOT + '/appVersion').on('value', (snap) => {
+    const data = snap.val();
+    if (!data || !data.version) return;
+
+    if (data.version !== APP_VERSION) {
+      console.warn('[SAS Version] Outdated version detected. Local:', APP_VERSION, 'Required:', data.version);
+      // Show a brief notice then force reload
+      const notice = document.createElement('div');
+      notice.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#e50914;color:white;text-align:center;padding:14px;font-weight:700;font-size:14px;font-family:sans-serif;';
+      notice.textContent = 'New version available — reloading...';
+      document.body.appendChild(notice);
+
+      // Clear service worker caches before reloading
+      if ('caches' in window) {
+        caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).then(() => {
+          setTimeout(() => location.reload(true), 1200);
+        });
+      } else {
+        setTimeout(() => location.reload(true), 1200);
+      }
+    }
+  });
+}
+
+// =========================================================================
+//  SECURITY: ROLE RE-VALIDATION (Issue 5)
+// =========================================================================
+
+function validateRoleFromFirebase() {
+  if (!db || !deviceId) return;
+
+  db.ref(DB_ROOT + '/devices/' + deviceId).once('value', (snap) => {
+    const data = snap.val();
+    const savedRole = localStorage.getItem('sas_user_role');
+
+    if (!data) {
+      // Device record doesn't exist in Firebase at all — no role, elevated or
+      // not, can be trusted from localStorage alone. Nothing self-registers
+      // without a real Firebase record (super_admin included).
+      if (savedRole === 'admin' || savedRole === 'super_admin') {
+        console.warn('[SAS Security] Elevated role claimed but no Firebase record — reverting to guest');
+        localStorage.removeItem('sas_user_role');
+        isAdmin = false;
+        isSuperAdmin = false;
+        currentUserRole = 'guest';
+        updateAccessUI('unknown');
+      }
+      return;
+    }
+
+    const firebaseRole = data.role || 'guest';
+
+    // If locally claiming an elevated role but Firebase disagrees — revoke
+    // (prevents localStorage tampering for admin AND super_admin alike).
+    if ((savedRole === 'admin' || savedRole === 'super_admin') && firebaseRole !== savedRole) {
+      console.warn(`[SAS Security] Role mismatch: local=${savedRole}, Firebase=${firebaseRole} — reverting`);
+      localStorage.removeItem('sas_user_role');
+      isAdmin = false;
+      isSuperAdmin = false;
+      currentUserRole = 'guest';
+      updateAccessUI('unknown');
+    }
+  });
+}
+
+// =========================================================================
+//  SERVICE WORKER UPDATE LISTENER (Issue 6)
+// =========================================================================
+
+function listenForSWUpdates() {
+  if (!('serviceWorker' in navigator)) return;
+
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'SW_UPDATED') {
+      console.log('[SAS SW] New service worker activated — reloading for update');
+      // Clear caches and reload
+      if ('caches' in window) {
+        caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).then(() => {
+          location.reload(true);
+        });
+      } else {
+        location.reload(true);
+      }
+    }
+  });
+
+  // Also check for waiting service workers and skip them
+  navigator.serviceWorker.ready.then((registration) => {
+    if (registration.waiting) {
+      registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+    }
+
+    registration.addEventListener('updatefound', () => {
+      const newWorker = registration.installing;
+      if (newWorker) {
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'activated') {
+            // New SW is active — will receive its postMessage
+          }
+        });
+      }
+    });
+  });
+}
+
 // Lifecycle Boot
 window.addEventListener('load', () => {
+  updateControlAccessUI(); // fail-closed: locked until Firebase confirms otherwise
   bindRemoteEvents();
   if (typeof firebase !== 'undefined') {
     initFirebase();
   }
   initMediaSession();
   initPiPButton();
+  listenForSWUpdates();
+
+  // Start health check, heartbeat, and time sync after a delay (allows player to initialize)
+  setTimeout(() => {
+    startPlayerHealthCheck();
+    startHeartbeat();
+    startTimeSync();
+  }, 3000);
 });
