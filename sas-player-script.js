@@ -254,7 +254,7 @@ function onYouTubeIframeAPIReady() {
   if (!isSuper && lastNowPlayingData && lastNowPlayingData.videoId === initialId) {
     initialStartSeconds = (typeof lastNowPlayingData.currentTime === 'number') ? lastNowPlayingData.currentTime : 0;
     if (lastNowPlayingData.isPlaying && lastNowPlayingData.timestamp) {
-      const elapsed = (Date.now() - lastNowPlayingData.timestamp) / 1000;
+      const elapsed = (serverNow() - lastNowPlayingData.timestamp) / 1000;
       if (elapsed > 0 && elapsed < 600) initialStartSeconds += elapsed;
     }
   }
@@ -1167,6 +1167,13 @@ const SUPER_ADMIN_HASH = '0a72a68aee0043b23198c07dde1e0332fb80eef3fb87a5df882470
 const DB_ROOT = 'sas-player';
 
 let db = null;
+// Offset (ms) between this device's Date.now() and Firebase's server clock.
+// serverNow() gives a "now" that all devices agree on, regardless of each
+// device's own clock accuracy.
+let serverTimeOffset = 0;
+function serverNow() {
+  return Date.now() + serverTimeOffset;
+}
 let deviceId = null;
 let deviceStatus = 'unknown';
 let currentUserRole = 'guest';
@@ -1240,6 +1247,14 @@ function initFirebase() {
     }
     db = firebase.database();
     deviceId = getOrCreateDeviceId();
+
+    // Track how far this device's local clock is from Firebase's server clock.
+    // Used everywhere we need "now" to line up with a server-stamped timestamp,
+    // so two different devices' clock drift can't be misread as playback drift.
+    db.ref('.info/serverTimeOffset').on('value', (snap) => {
+      const offset = snap.val();
+      serverTimeOffset = (typeof offset === 'number') ? offset : 0;
+    });
 
     db.ref(DB_ROOT + '/devices').on('value', (snap) => {
       const devs = snap.val();
@@ -1384,7 +1399,9 @@ function applyNowPlayingUI(data) {
       // Calculate target position in seconds taking network transit time into account
       let targetPosition = typeof data.currentTime === 'number' ? data.currentTime : 0;
       if (data.isPlaying && data.timestamp) {
-        const elapsed = (Date.now() - data.timestamp) / 1000;
+        // Both sides of this subtraction are now on the same (server) clock,
+        // so device clock skew can no longer masquerade as playback drift.
+        const elapsed = (serverNow() - data.timestamp) / 1000;
         if (elapsed > 0 && elapsed < 600) {
           targetPosition += elapsed;
         }
@@ -1590,7 +1607,10 @@ function broadcastNowPlaying(title, isPlaying) {
     trackIndex: currentIndex,
     videoId: curVideoId,
     currentTime: Math.round(curTime * 10) / 10,
-    timestamp: Date.now(),
+    // Server-resolved timestamp: Firebase replaces this with the RTDB server's
+    // own clock value at write time, so every device measures "elapsed since
+    // broadcast" against the same clock instead of the Super Admin's local one.
+    timestamp: firebase.database.ServerValue.TIMESTAMP,
     updatedAt: Date.now(),
     updatedBy: lastCommandIssuer || deviceId
   });
