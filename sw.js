@@ -1,40 +1,60 @@
-// SAS Player Service Worker
-// Caches the app shell for fast load and offline UI
+// SAS Player Service Worker v3.1.4
+// Network-first for app shell, cache fallback for offline resilience
+// Forces immediate activation and notifies clients on update
 
-const CACHE_NAME = 'sas-player-v2';
+const CACHE_NAME = 'sas-player-v3.1.4';
 const SHELL_ASSETS = [
   './index.html',
   './sas-player-styles.css',
   './sas-player-script.js',
-  './sas-icon.jpg',
   './sas-player-logo-1.png',
   './sas-player-logo-light.png',
   './manifest.json'
 ];
 
-// ─── Install: cache all shell assets ─────────────────────────────────────────
+// ─── Install: cache all shell assets resiliently, then skip waiting immediately
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(SHELL_ASSETS);
+    caches.open(CACHE_NAME).then(async (cache) => {
+      for (const asset of SHELL_ASSETS) {
+        try {
+          await cache.add(asset);
+        } catch (err) {
+          console.warn('[SW] Asset cached failed (non-fatal):', asset);
+        }
+      }
     })
   );
   self.skipWaiting();
 });
 
-// ─── Activate: purge old caches ───────────────────────────────────────────────
+// ─── Activate: purge ALL old caches, claim clients, notify them ──────────────
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(
         keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
       )
-    )
+    ).then(() => {
+      // Notify all open tabs/clients that a new SW version is active
+      return self.clients.matchAll({ type: 'window' }).then((clients) => {
+        clients.forEach((client) => {
+          client.postMessage({ type: 'SW_UPDATED', version: CACHE_NAME });
+        });
+      });
+    })
   );
   self.clients.claim();
 });
 
-// ─── Fetch: shell-first, network fallback ────────────────────────────────────
+// ─── Listen for SKIP_WAITING messages from the page ──────────────────────────
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
+// ─── Fetch: NETWORK-FIRST for app shell, cache as fallback ───────────────────
 self.addEventListener('fetch', (event) => {
   // Only handle same-origin GET requests
   if (event.request.method !== 'GET') return;
@@ -49,20 +69,19 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Network-first strategy: always try the network, fall back to cache
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      // Return cached version immediately, then update cache in background
-      const networkFetch = fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return response;
-        })
-        .catch(() => cached); // If network fails, use cache
-
-      return cached || networkFetch;
-    })
+    fetch(event.request)
+      .then((response) => {
+        if (response && response.status === 200) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() => {
+        // Network failed — serve from cache (offline fallback)
+        return caches.match(event.request);
+      })
   );
 });
