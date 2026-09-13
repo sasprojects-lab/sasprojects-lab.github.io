@@ -9,13 +9,13 @@
   "orientation": "any",
   "icons": [
     {
-      "src": "sas-icon.jpg",
+      "src": "sas-player-logo-1.png",
       "sizes": "192x192",
       "type": "image/jpeg",
       "purpose": "any maskable"
     },
     {
-      "src": "sas-icon.jpg",
+      "src": "sas-player-logo-1.png",
       "sizes": "512x512",
       "type": "image/jpeg",
       "purpose": "any maskable"
@@ -28,14 +28,14 @@
       "short_name": "Play",
       "description": "Toggle play or pause",
       "url": "./index.html?action=playpause",
-      "icons": [{ "src": "sas-icon.jpg", "sizes": "96x96" }]
+      "icons": [{ "src": "sas-player-logo-1.png", "sizes": "96x96" }]
     },
     {
       "name": "Next Track",
       "short_name": "Next",
       "description": "Skip to next track",
       "url": "./index.html?action=next",
-      "icons": [{ "src": "sas-icon.jpg", "sizes": "96x96" }]
+      "icons": [{ "src": "sas-player-logo-1.png", "sizes": "96x96" }]
     }
   ]
 }
