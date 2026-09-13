@@ -2285,6 +2285,23 @@ function startTimeSync() {
 }
 
 // =========================================================================
+//  FORCE-FRESH RELOAD (Issue 6 continued)
+// =========================================================================
+// location.reload(true) is a legacy no-op in every modern browser — the
+// "bypass cache" boolean argument was dropped from the spec. Appending a
+// unique cache-busting query string is what actually guarantees the browser
+// treats this as a brand-new URL and skips its HTTP cache entirely.
+function forceFreshReload() {
+  try {
+    const url = new URL(location.href);
+    url.searchParams.set('_cb', Date.now().toString());
+    location.replace(url.toString());
+  } catch (_) {
+    location.reload();
+  }
+}
+
+// =========================================================================
 //  VERSION ENFORCEMENT (Issue 6)
 // =========================================================================
 
@@ -2315,10 +2332,10 @@ function enforceAppVersion() {
       // Clear service worker caches before reloading
       if ('caches' in window) {
         caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).then(() => {
-          setTimeout(() => location.reload(true), 1200);
+          setTimeout(forceFreshReload, 1200);
         });
       } else {
-        setTimeout(() => location.reload(true), 1200);
+        setTimeout(forceFreshReload, 1200);
       }
     }
   });
@@ -2366,8 +2383,12 @@ function validateRoleFromFirebase() {
 }
 
 // =========================================================================
-//  SERVICE WORKER UPDATE LISTENER (Issue 6)
+//  SERVICE WORKER: REGISTER + UPDATE LISTENER (Issue 6)
 // =========================================================================
+// NOTE: registration was previously missing entirely — sw.js existed on disk
+// but no client ever installed it, so none of its caching or update-push
+// logic ever actually ran. This is what let stale, hard-cached browsers sit
+// on an old build indefinitely with no way to detect a new one.
 
 function listenForSWUpdates() {
   if (!('serviceWorker' in navigator)) return;
@@ -2378,16 +2399,26 @@ function listenForSWUpdates() {
       // Clear caches and reload
       if ('caches' in window) {
         caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).then(() => {
-          location.reload(true);
+          forceFreshReload();
         });
       } else {
-        location.reload(true);
+        forceFreshReload();
       }
     }
   });
 
-  // Also check for waiting service workers and skip them
-  navigator.serviceWorker.ready.then((registration) => {
+  navigator.serviceWorker.register('./sw.js').then((registration) => {
+    // Ask the browser to check sw.js for changes right now, rather than
+    // waiting for its own internal (up to 24h) update check on next
+    // navigation. This is what actually lets an already-open, never-closed
+    // tab discover a new deploy.
+    registration.update().catch(() => { });
+
+    // Keep re-checking periodically while the tab stays open.
+    setInterval(() => registration.update().catch(() => { }), 5 * 60 * 1000);
+
+    // If a new worker is already waiting (installed while we were away),
+    // activate it immediately instead of waiting for the next full reload.
     if (registration.waiting) {
       registration.waiting.postMessage({ type: 'SKIP_WAITING' });
     }
@@ -2396,12 +2427,17 @@ function listenForSWUpdates() {
       const newWorker = registration.installing;
       if (newWorker) {
         newWorker.addEventListener('statechange', () => {
-          if (newWorker.state === 'activated') {
-            // New SW is active — will receive its postMessage
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            // A new version has installed and is waiting behind the current
+            // one — tell it to take over immediately rather than sitting
+            // idle until every tab happens to close.
+            newWorker.postMessage({ type: 'SKIP_WAITING' });
           }
         });
       }
     });
+  }).catch((err) => {
+    console.warn('[SAS SW] Registration failed:', err);
   });
 }
 
