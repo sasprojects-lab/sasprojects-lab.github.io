@@ -1,7 +1,7 @@
 // =========================================================================
 //  SAS PLAYER — APP VERSION (used for cache busting & version enforcement)
 // =========================================================================
-const APP_VERSION = '3.1.5';
+const APP_VERSION = '3.1.4';
 
 // Default Studio Playlist
 const DEFAULT_TRACKS = [
@@ -42,6 +42,12 @@ let lastNowPlayingData = null;
 let ytApiReady = false;
 let nowPlayingSnapshotArrived = false;
 let playerCreationAttempted = false;
+// Set once Firebase has authoritatively told us this device's real role
+// (super_admin / admin / guest) — see listenToDeviceStatus(). Used to decide
+// real player vs. thumbnail-only view without ever trusting an unconfirmed
+// localStorage guess for that decision.
+let roleConfirmed = false;
+let currentThumbnailVideoId = null;
 let lastVolumeData = null;
 let activePlaylistId = '';
 let activePlaylistTitle = '';
@@ -272,14 +278,160 @@ function tryInitPlayer() {
   if (playerCreationAttempted || !ytApiReady) return;
 
   const savedRole = localStorage.getItem('sas_user_role');
-  const isSuper = (savedRole === 'super_admin');
+  const likelySuper = (savedRole === 'super_admin');
 
-  // Super Admin is the source of truth and isn't resuming anyone else's
-  // position, so it doesn't need to wait on nowPlaying data at all.
-  if (isSuper || nowPlayingSnapshotArrived || playerInitTimedOut) {
+  // Fast path: a returning Super Admin drives playback themselves and
+  // shouldn't wait on anything — build the real player immediately.
+  if (likelySuper) {
     playerCreationAttempted = true;
     createYouTubePlayer();
+    return;
   }
+
+  // Everyone else: wait for Firebase to authoritatively confirm the role
+  // before deciding. This matters most for a first-time Super Admin visit
+  // (no localStorage yet) — they still need the real player, not a
+  // thumbnail. Time out after a short wait so we're never stuck if
+  // Firebase is slow or offline.
+  if (roleConfirmed || playerInitTimedOut) {
+    playerCreationAttempted = true;
+    if (isSuperAdmin) {
+      createYouTubePlayer();
+    } else {
+      // Non-super-admin devices (Admin + approved guests) no longer run a
+      // real, synced YouTube player at all — trying to keep a second video
+      // element in lockstep with the host over the network was the actual
+      // source of the stutter/drift problems. They just show a static
+      // thumbnail of whatever's playing; controls still work via
+      // sendCommand(), which was already independent of any local player.
+      createThumbnailView();
+    }
+  }
+}
+
+// Called every time Firebase confirms (or updates) this device's role —
+// see listenToDeviceStatus(). Lets a device already showing a thumbnail
+// switch to a real player if promoted to Super Admin mid-session, and vice
+// versa if it eagerly built a real player on a stale localStorage guess
+// that turned out wrong.
+function markRoleConfirmed() {
+  roleConfirmed = true;
+  tryInitPlayer();
+  reconcilePlayerModeWithRole();
+}
+
+function reconcilePlayerModeWithRole() {
+  if (!playerCreationAttempted) return; // tryInitPlayer() hasn't decided yet
+
+  if (isSuperAdmin && !player) {
+    // Was thumbnail-only, just got promoted to Super Admin — needs the
+    // real player now to actually drive playback.
+    const thumbImg = document.getElementById('np-thumbnail');
+    if (thumbImg) thumbImg.remove();
+    createYouTubePlayer();
+  } else if (!isSuperAdmin && player && !document.getElementById('np-thumbnail')) {
+    // Had eagerly built a real player on a stale "was super admin"
+    // localStorage guess (or got demoted since) — tear it down and fall
+    // back to the thumbnail view instead of leaving a dead, unsynced iframe.
+    try { if (typeof player.destroy === 'function') player.destroy(); } catch (_) { }
+    player = null;
+    // destroy() removes the iframe entirely — including the 'yt-iframe' id
+    // it inherited from the original placeholder div — so rebuild that
+    // placeholder before the thumbnail view tries to attach to it.
+    const stageContainer = document.getElementById('player-container');
+    if (stageContainer && !document.getElementById('yt-iframe')) {
+      const freshDiv = document.createElement('div');
+      freshDiv.id = 'yt-iframe';
+      stageContainer.appendChild(freshDiv);
+    }
+    createThumbnailView();
+  }
+}
+
+function createThumbnailView() {
+  const container = document.getElementById('yt-iframe');
+  if (!container) return;
+  container.innerHTML = '';
+  const img = document.createElement('img');
+  img.id = 'np-thumbnail';
+  img.alt = 'Now playing thumbnail';
+  img.style.width = '100%';
+  img.style.height = '100%';
+  img.style.objectFit = 'cover';
+  img.style.display = 'block';
+  img.style.background = '#000';
+  container.appendChild(img);
+
+  // If we already know what's playing (e.g. this ran after nowPlaying data
+  // arrived), show it right away instead of a blank frame.
+  if (lastNowPlayingData) {
+    const vid = lastNowPlayingData.videoId ||
+      (videoLinks[lastNowPlayingData.trackIndex] ? videoLinks[lastNowPlayingData.trackIndex].id : null);
+    if (vid) updateThumbnailForVideo(vid);
+  }
+}
+
+function updateThumbnailForVideo(videoId) {
+  if (!videoId || videoId === currentThumbnailVideoId) return;
+  currentThumbnailVideoId = videoId;
+  const img = document.getElementById('np-thumbnail');
+  if (!img) return;
+  // hqdefault.jpg exists for every public video; maxresdefault.jpg doesn't
+  // (only present for uploads over a certain resolution), so this is the
+  // safe universal choice.
+  img.src = 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg';
+}
+
+// =========================================================================
+//  TRACK TIMER
+// =========================================================================
+// Super Admin reads its own player directly. Everyone else (thumbnail-only
+// devices, with no local player at all) derives it the same way the old
+// video-sync code used to — from the last broadcast's currentTime/timestamp
+// plus elapsed real time — just for display now, not for seeking anything.
+
+function formatTime(seconds) {
+  if (!isFinite(seconds) || seconds < 0) seconds = 0;
+  const total = Math.floor(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+let trackTimerInterval = null;
+function startTrackTimer() {
+  if (trackTimerInterval) clearInterval(trackTimerInterval);
+  trackTimerInterval = setInterval(updateTrackTimerDisplay, 1000);
+  updateTrackTimerDisplay(); // don't wait a full second for the first paint
+}
+
+function updateTrackTimerDisplay() {
+  const curEl = document.getElementById('timer-current');
+  const durEl = document.getElementById('timer-duration');
+  if (!curEl || !durEl) return;
+
+  let current = 0;
+  let duration = 0;
+
+  if (isSuperAdmin && player && typeof player.getCurrentTime === 'function') {
+    current = player.getCurrentTime() || 0;
+    duration = (typeof player.getDuration === 'function') ? (player.getDuration() || 0) : 0;
+  } else if (lastNowPlayingData) {
+    const data = lastNowPlayingData;
+    current = typeof data.currentTime === 'number' ? data.currentTime : 0;
+    if (data.isPlaying && data.timestamp) {
+      const elapsed = (serverNow() - data.timestamp) / 1000;
+      if (elapsed > 0 && elapsed < 600) current += elapsed;
+    }
+    duration = typeof data.duration === 'number' ? data.duration : 0;
+    if (duration > 0) current = Math.min(current, duration);
+  }
+
+  curEl.textContent = formatTime(current);
+  durEl.textContent = duration > 0 ? formatTime(duration) : '--:--';
 }
 
 function createYouTubePlayer() {
@@ -1380,6 +1532,7 @@ function listenToDeviceStatus() {
       localStorage.removeItem('sas_user_role');
     }
     roleConfirmedOnce = true;
+    markRoleConfirmed();
 
     deviceStatus = newStatus;
     if (newStatus === 'approved' || isAdmin || isSuperAdmin) {
@@ -1443,95 +1596,13 @@ function applyNowPlayingUI(data) {
 
   updatePlaybackUIState(isPlaying, title, data.trackIndex);
 
-  // Synchronize video feed for non-super-admin (clients / admins)
+  // Non-super-admin devices (Admin + approved guests) no longer run a real
+  // player to keep in sync — see tryInitPlayer(). Just keep the thumbnail
+  // pointed at whatever's actually playing.
   if (!isSuperAdmin) {
     const targetVideoId = data.videoId || (videoLinks[data.trackIndex] ? videoLinks[data.trackIndex].id : null);
     if (targetVideoId) {
-      // Calculate target position in seconds taking network transit time into account
-      let targetPosition = typeof data.currentTime === 'number' ? data.currentTime : 0;
-      if (data.isPlaying && data.timestamp) {
-        // Both sides of this subtraction are now on the same (server) clock,
-        // so device clock skew can no longer masquerade as playback drift.
-        const elapsed = (serverNow() - data.timestamp) / 1000;
-        if (elapsed > 0 && elapsed < 600) {
-          targetPosition += elapsed;
-        }
-      }
-
-      if (player && typeof player.loadVideoById === 'function') {
-        if (player.mute && player.isMuted && !player.isMuted()) {
-          player.mute();
-        }
-
-        // Determine what video is currently loaded in the YouTube player
-        let currentLoadedId = '';
-        if (typeof player.getVideoData === 'function') {
-          const vd = player.getVideoData();
-          if (vd && vd.video_id) currentLoadedId = vd.video_id;
-        }
-        if (!currentLoadedId) currentLoadedId = lastLoadedVideoId;
-
-        const isDifferentVideo = (currentLoadedId !== targetVideoId);
-
-        if (isDifferentVideo) {
-          lastLoadedVideoId = targetVideoId;
-          if (player.mute) player.mute();
-          if (isPlaying) {
-            player.loadVideoById({
-              videoId: targetVideoId,
-              startSeconds: Math.floor(targetPosition)
-            });
-            if (targetPosition > 1) {
-              setTimeout(() => {
-                try {
-                  if (player && typeof player.seekTo === 'function') player.seekTo(targetPosition, true);
-                } catch (_) { }
-              }, 400);
-            }
-          } else {
-            player.cueVideoById({
-              videoId: targetVideoId,
-              startSeconds: Math.floor(targetPosition)
-            });
-          }
-        } else {
-          // Same video: NEVER reload or cue! Only synchronize play/pause state.
-          const playerState = (typeof player.getPlayerState === 'function') ? player.getPlayerState() : -1;
-
-          if (isPlaying) {
-            if (playerState !== YT.PlayerState.PLAYING && playerState !== YT.PlayerState.BUFFERING) {
-              if (player.mute) player.mute();
-              player.playVideo();
-            }
-
-            // Frame-accurate synchronization: correct drift whenever we're
-            // supposed to be playing, regardless of the exact reported state.
-            // Gating this on playerState === PLAYING meant a device stuck at
-            // 0:00 (autoplay hiccup, still buffering/cued, etc.) never got
-            // nudged to the right position — it just sat there showing the
-            // start of the track until it happened to reach PLAYING on its
-            // own, which could take a while or never fully catch up.
-            if (typeof player.getCurrentTime === 'function' && typeof player.seekTo === 'function') {
-              const curTime = player.getCurrentTime();
-              if (typeof curTime === 'number') {
-                const drift = Math.abs(curTime - targetPosition);
-                if (drift > 3.0) {
-                  player.seekTo(targetPosition, true);
-                }
-              }
-            }
-          } else {
-            if (playerState !== YT.PlayerState.PAUSED && playerState !== YT.PlayerState.CUED) {
-              player.pauseVideo();
-            }
-          }
-        }
-      } else {
-        // Player not ready yet — queue target video and start timestamp for onPlayerReady
-        pendingVideoId = targetVideoId;
-        pendingIsPlaying = isPlaying;
-        pendingStartSeconds = targetPosition;
-      }
+      updateThumbnailForVideo(targetVideoId);
     }
   }
 }
@@ -1629,6 +1700,7 @@ function broadcastNowPlaying(title, isPlaying) {
 
   let curVideoId = '';
   let curTime = 0;
+  let curDuration = 0;
   if (player) {
     if (typeof player.getVideoData === 'function') {
       const vd = player.getVideoData();
@@ -1636,6 +1708,9 @@ function broadcastNowPlaying(title, isPlaying) {
     }
     if (typeof player.getCurrentTime === 'function') {
       curTime = player.getCurrentTime() || 0;
+    }
+    if (typeof player.getDuration === 'function') {
+      curDuration = player.getDuration() || 0;
     }
   }
   if (!curVideoId && videoLinks[currentIndex]) {
@@ -1658,6 +1733,7 @@ function broadcastNowPlaying(title, isPlaying) {
     trackIndex: currentIndex,
     videoId: curVideoId,
     currentTime: Math.round(curTime * 10) / 10,
+    duration: Math.round(curDuration * 10) / 10,
     // Server-resolved timestamp: Firebase replaces this with the RTDB server's
     // own clock value at write time, so every device measures "elapsed since
     // broadcast" against the same clock instead of the Super Admin's local one.
@@ -2527,6 +2603,7 @@ window.addEventListener('load', () => {
   initMediaSession();
   initPiPButton();
   listenForSWUpdates();
+  startTrackTimer();
 
   // Start health check, heartbeat, and time sync after a delay (allows player to initialize)
   setTimeout(() => {
