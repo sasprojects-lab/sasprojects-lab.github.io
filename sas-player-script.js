@@ -348,19 +348,101 @@ function reconcilePlayerModeWithRole() {
   }
 }
 
+// Injects the CSS for the thumbnail progress overlay exactly once. Kept as
+// a JS-injected <style> tag rather than sas-player-styles.css so this view
+// doesn't depend on that file being updated — it's self-contained here.
+function injectThumbnailProgressStyles() {
+  if (document.getElementById('thumb-progress-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'thumb-progress-styles';
+  style.textContent = `
+    .thumb-progress-wrap {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background: #000;
+    }
+    .thumb-progress-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      background: #000;
+    }
+    .thumb-progress-overlay {
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      padding: 18px 18px 14px;
+      background: linear-gradient(180deg, transparent, rgba(0,0,0,0.72) 55%, rgba(0,0,0,0.88));
+      pointer-events: none;
+    }
+    .thumb-progress-track {
+      position: relative;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.22);
+      margin-bottom: 8px;
+    }
+    .thumb-progress-fill {
+      position: absolute;
+      top: 0; left: 0; bottom: 0;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #4fd1c5, #e3a857);
+      transition: width 1s linear;
+    }
+    .thumb-progress-fill::after {
+      content: '';
+      position: absolute;
+      right: -4px; top: 50%;
+      width: 9px; height: 9px;
+      background: #e3a857;
+      border-radius: 50%;
+      transform: translateY(-50%);
+      box-shadow: 0 0 8px rgba(227,168,87,0.85);
+    }
+    .thumb-progress-labels {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono, 'JetBrains Mono', monospace);
+      font-size: 11px;
+      color: #f2f0ea;
+      letter-spacing: 0.02em;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
 function createThumbnailView() {
   const container = document.getElementById('yt-iframe');
   if (!container) return;
   container.innerHTML = '';
+
+  injectThumbnailProgressStyles();
+
+  const wrap = document.createElement('div');
+  wrap.className = 'thumb-progress-wrap';
+
   const img = document.createElement('img');
   img.id = 'np-thumbnail';
+  img.className = 'thumb-progress-img';
   img.alt = 'Now playing thumbnail';
-  img.style.width = '100%';
-  img.style.height = '100%';
-  img.style.objectFit = 'cover';
-  img.style.display = 'block';
-  img.style.background = '#000';
-  container.appendChild(img);
+  wrap.appendChild(img);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'thumb-progress-overlay';
+  overlay.innerHTML = `
+    <div class="thumb-progress-track">
+      <div class="thumb-progress-fill" id="thumb-progress-fill"></div>
+    </div>
+    <div class="thumb-progress-labels">
+      <span id="thumb-progress-current">0:00</span>
+      <span id="thumb-progress-duration">--:--</span>
+    </div>
+  `;
+  wrap.appendChild(overlay);
+
+  container.appendChild(wrap);
 
   // If we already know what's playing (e.g. this ran after nowPlaying data
   // arrived), show it right away instead of a blank frame.
@@ -432,6 +514,18 @@ function updateTrackTimerDisplay() {
 
   curEl.textContent = formatTime(current);
   durEl.textContent = duration > 0 ? formatTime(duration) : '--:--';
+
+  // Mirror the same numbers onto the thumbnail-only progress overlay
+  // (Admins / guests with no local player) when it's present in the DOM.
+  const thumbFill = document.getElementById('thumb-progress-fill');
+  const thumbCur = document.getElementById('thumb-progress-current');
+  const thumbDur = document.getElementById('thumb-progress-duration');
+  if (thumbFill) {
+    const pct = duration > 0 ? Math.min(100, Math.max(0, (current / duration) * 100)) : 0;
+    thumbFill.style.width = pct + '%';
+  }
+  if (thumbCur) thumbCur.textContent = formatTime(current);
+  if (thumbDur) thumbDur.textContent = duration > 0 ? formatTime(duration) : '--:--';
 }
 
 function createYouTubePlayer() {
