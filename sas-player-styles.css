@@ -943,6 +943,10 @@ main.studio-master-grid {
 }
 
 /* Waveform Bars */
+/* Heights are driven live from JS (updateWaveformBars in sas-player-script.js),
+   synced to actual playback position rather than a fixed decorative loop —
+   see the comment above startWaveformAnimation() in the script for why this
+   can't be a true audio-frequency visualizer (cross-origin YouTube iframe). */
 .audio-waveform-container {
   display: flex;
   align-items: flex-end;
@@ -953,22 +957,10 @@ main.studio-master-grid {
 
 .waveform-bar {
   width: 4px;
+  height: 4px;
   background: var(--yt-red);
   border-radius: 2px;
-  animation: bounce-bar 1.2s ease-in-out infinite alternate;
-}
-
-.waveform-bar:nth-child(1) { height: 10px; animation-delay: 0.1s; }
-.waveform-bar:nth-child(2) { height: 20px; animation-delay: 0.3s; }
-.waveform-bar:nth-child(3) { height: 14px; animation-delay: 0.2s; }
-.waveform-bar:nth-child(4) { height: 22px; animation-delay: 0.5s; }
-.waveform-bar:nth-child(5) { height: 12px; animation-delay: 0.4s; }
-.waveform-bar:nth-child(6) { height: 16px; animation-delay: 0.2s; }
-.waveform-bar:nth-child(7) { height: 8px;  animation-delay: 0.6s; }
-
-@keyframes bounce-bar {
-  0% { transform: scaleY(0.3); }
-  100% { transform: scaleY(1); }
+  transition: height 150ms ease;
 }
 
 .master-controls-toolbar {
