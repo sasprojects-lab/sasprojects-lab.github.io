@@ -1,7 +1,7 @@
 // =========================================================================
 //  SAS PLAYER — APP VERSION (used for cache busting & version enforcement)
 // =========================================================================
-const APP_VERSION = '3.1.4';
+const APP_VERSION = '3.2.0';
 
 // Default Studio Playlist
 const DEFAULT_TRACKS = [
@@ -413,11 +413,22 @@ function injectThumbnailProgressStyles() {
   document.head.appendChild(style);
 }
 
+// The old text timer (deck-track-timer, next to the title) is only
+// redundant for thumbnail-only viewers, who now get current/duration on
+// the thumbnail's own progress bar. Super Admin has no thumbnail overlay
+// (their real YouTube iframe has no room for one), so they still need it —
+// this just toggles which one is showing rather than deleting it outright.
+function setDeckTimerVisible(visible) {
+  const el = document.getElementById('deck-track-timer');
+  if (el) el.style.display = visible ? '' : 'none';
+}
+
 function createThumbnailView() {
   const container = document.getElementById('yt-iframe');
   if (!container) return;
   container.innerHTML = '';
 
+  setDeckTimerVisible(false);
   injectThumbnailProgressStyles();
 
   const wrap = document.createElement('div');
@@ -528,7 +539,77 @@ function updateTrackTimerDisplay() {
   if (thumbDur) thumbDur.textContent = duration > 0 ? formatTime(duration) : '--:--';
 }
 
+// =========================================================================
+//  WAVEFORM — driven by real playback position, not a generic CSS loop
+// =========================================================================
+// NOTE: a YouTube iframe embed is cross-origin, so the Web Audio API's
+// AnalyserNode (the thing that would give true frequency-bin data for a
+// "real" reactive waveform) has no access to its audio stream — there's no
+// captureStream()/createMediaElementSource() path across that boundary.
+// This can't be a genuine audio-reactive visualizer as long as playback
+// goes through the YouTube iframe.
+//
+// What this does instead: every bar's height is a deterministic function of
+// the *actual* synced currentTime (same value the timer/progress bar use),
+// so every connected device's bars move identically and in lockstep with
+// real playback — rather than each device running its own disconnected,
+// endlessly-looping CSS keyframe animation. Height also scales with master
+// volume and goes flat when paused.
+
+function seededPseudoRandom(seed) {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+let waveformInterval = null;
+function startWaveformAnimation() {
+  if (waveformInterval) clearInterval(waveformInterval);
+  waveformInterval = setInterval(updateWaveformBars, 160);
+  updateWaveformBars();
+}
+
+function updateWaveformBars() {
+  const waveform = document.getElementById('waveform-box');
+  if (!waveform) return;
+  const bars = waveform.querySelectorAll('.waveform-bar');
+  if (!bars.length) return;
+
+  let current = 0;
+  let playing = false;
+
+  if (isSuperAdmin && player && typeof player.getCurrentTime === 'function') {
+    current = player.getCurrentTime() || 0;
+    playing = typeof player.getPlayerState === 'function' && player.getPlayerState() === YT.PlayerState.PLAYING;
+  } else if (lastNowPlayingData) {
+    const data = lastNowPlayingData;
+    current = typeof data.currentTime === 'number' ? data.currentTime : 0;
+    playing = !!data.isPlaying;
+    if (playing && data.timestamp) {
+      const elapsed = (serverNow() - data.timestamp) / 1000;
+      if (elapsed > 0 && elapsed < 600) current += elapsed;
+    }
+  }
+
+  const volumeEl = document.getElementById('master-volume-slider');
+  const volumeScale = volumeEl ? (parseInt(volumeEl.value, 10) / 100) : 1;
+
+  bars.forEach((bar, i) => {
+    if (!playing) {
+      bar.style.height = '4px';
+      return;
+    }
+    // Ticks every ~166ms of playback time (current * 6), offset per bar so
+    // they don't all move together — still fully deterministic from
+    // currentTime, so it stays in sync across every device.
+    const seed = Math.floor(current * 6) + i * 17;
+    const amplitude = 0.25 + seededPseudoRandom(seed) * 0.75;
+    const heightPx = 4 + amplitude * 16 * Math.max(0.3, Math.min(1, volumeScale));
+    bar.style.height = heightPx.toFixed(1) + 'px';
+  });
+}
+
 function createYouTubePlayer() {
+  setDeckTimerVisible(true);
   const initialId = (lastNowPlayingData && lastNowPlayingData.videoId)
     ? lastNowPlayingData.videoId
     : (pendingVideoId || (videoLinks[currentIndex] ? videoLinks[currentIndex].id : 'byitAI7kkOM'));
@@ -2698,6 +2779,7 @@ window.addEventListener('load', () => {
   initPiPButton();
   listenForSWUpdates();
   startTrackTimer();
+  startWaveformAnimation();
 
   // Start health check, heartbeat, and time sync after a delay (allows player to initialize)
   setTimeout(() => {
