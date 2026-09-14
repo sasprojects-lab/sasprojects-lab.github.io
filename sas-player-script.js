@@ -1,7 +1,7 @@
 // =========================================================================
 //  SAS PLAYER — APP VERSION (used for cache busting & version enforcement)
 // =========================================================================
-const APP_VERSION = '3.1.4';
+const APP_VERSION = '3.1.5';
 
 // Default Studio Playlist
 const DEFAULT_TRACKS = [
@@ -37,6 +37,11 @@ let usingYouTubePlaylist = false;
 let pendingCommandIssuer = null;
 let lastCommandIssuer = null;
 let lastNowPlayingData = null;
+// Player creation is gated on this instead of firing the instant YouTube's
+// iframe_api script loads — see onYouTubeIframeAPIReady() / tryInitPlayer().
+let ytApiReady = false;
+let nowPlayingSnapshotArrived = false;
+let playerCreationAttempted = false;
 let lastVolumeData = null;
 let activePlaylistId = '';
 let activePlaylistTitle = '';
@@ -237,7 +242,47 @@ function listenToLiveEvents() {
 }
 
 // Initialize YouTube Player
+//
+// This callback fires the instant YouTube's iframe_api script finishes
+// loading — independent of, and usually well before, our own Firebase
+// connection (which only starts on window 'load', after every other page
+// resource has finished). Building the player immediately here meant
+// lastNowPlayingData was still null most of the time on a fresh load, so
+// non-super-admin devices started at 0:00 on a fallback video and only
+// jumped to the right spot once Firebase data trickled in later — a visible
+// "restart from the beginning" every time a browser/tab reloads from scratch.
+//
+// Fix: just flip a readiness flag here, and let tryInitPlayer() decide when
+// it's actually safe to build the player (see below).
 function onYouTubeIframeAPIReady() {
+  ytApiReady = true;
+  tryInitPlayer();
+}
+
+// Give Firebase a brief window to deliver the first nowPlaying snapshot
+// before giving up and building the player anyway (so we never hang forever
+// if Firebase is slow, offline, or blocked).
+let playerInitTimedOut = false;
+setTimeout(() => {
+  playerInitTimedOut = true;
+  tryInitPlayer();
+}, 1500);
+
+function tryInitPlayer() {
+  if (playerCreationAttempted || !ytApiReady) return;
+
+  const savedRole = localStorage.getItem('sas_user_role');
+  const isSuper = (savedRole === 'super_admin');
+
+  // Super Admin is the source of truth and isn't resuming anyone else's
+  // position, so it doesn't need to wait on nowPlaying data at all.
+  if (isSuper || nowPlayingSnapshotArrived || playerInitTimedOut) {
+    playerCreationAttempted = true;
+    createYouTubePlayer();
+  }
+}
+
+function createYouTubePlayer() {
   const initialId = (lastNowPlayingData && lastNowPlayingData.videoId)
     ? lastNowPlayingData.videoId
     : (pendingVideoId || (videoLinks[currentIndex] ? videoLinks[currentIndex].id : 'byitAI7kkOM'));
@@ -1370,6 +1415,12 @@ function listenToNowPlaying() {
     const data = snap.val();
     if (!data) return;
     lastNowPlayingData = data;
+    // First real snapshot has arrived — safe to build the player now if it's
+    // been waiting on this (see tryInitPlayer()).
+    if (!nowPlayingSnapshotArrived) {
+      nowPlayingSnapshotArrived = true;
+      tryInitPlayer();
+    }
     // Strict authorization guard: never leak or sync now-playing data to unauthorized guests
     if (!isAuthorizedUser()) return;
     applyNowPlayingUI(data);
@@ -2209,7 +2260,9 @@ async function openMiniPlayer() {
 // When the super admin's screen turns off or tab is backgrounded, the YT player
 // silently suspends. This system detects when visibility returns and auto-recovers.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && isSuperAdmin && player) {
+  if (document.visibilityState !== 'visible' || !player) return;
+
+  if (isSuperAdmin) {
     // Screen just woke up — check if player needs recovery
     setTimeout(() => {
       if (!player || !player.getPlayerState) return;
@@ -2229,6 +2282,22 @@ document.addEventListener('visibilitychange', () => {
       const title = (vd && vd.title) ? vd.title.trim() : (document.getElementById('current-title')?.innerText || '');
       broadcastNowPlaying(title, player.getPlayerState() === YT.PlayerState.PLAYING);
     }, 500); // Small delay to let the player iframe reactivate
+  } else if (isAuthorizedUser()) {
+    // Regular Admin / approved devices: previously got NO active recovery at
+    // all here — they just sat passively waiting for the next periodic
+    // Firebase broadcast to happen to arrive and correct them. If the tab was
+    // frozen for a while (Chrome freezes hidden tabs after ~5 minutes) and
+    // the Firebase connection had to reconnect, that could take a noticeable
+    // moment, which is exactly what showed up as "video behind audio" after
+    // switching back. Force an immediate resync against the last known
+    // snapshot instead of waiting on the next tick — applyNowPlayingUI()
+    // recalculates the correct position using serverNow(), so it's accurate
+    // even if that snapshot itself is now several minutes stale.
+    setTimeout(() => {
+      if (lastNowPlayingData) {
+        applyNowPlayingUI(lastNowPlayingData);
+      }
+    }, 500);
   }
 });
 
@@ -2441,13 +2510,20 @@ function listenForSWUpdates() {
   });
 }
 
+// Start the Firebase connection as early as possible — do NOT wait for
+// window 'load', which blocks on every page resource (fonts, CDN icons,
+// logo images, etc.) and can lag well behind YouTube's iframe_api callback.
+// The Firebase SDK scripts are loaded synchronously before this script tag
+// in index.html, so `firebase` is already defined by the time this file
+// executes — no need to wait for anything else.
+if (typeof firebase !== 'undefined') {
+  initFirebase();
+}
+
 // Lifecycle Boot
 window.addEventListener('load', () => {
   updateControlAccessUI(); // fail-closed: locked until Firebase confirms otherwise
   bindRemoteEvents();
-  if (typeof firebase !== 'undefined') {
-    initFirebase();
-  }
   initMediaSession();
   initPiPButton();
   listenForSWUpdates();
