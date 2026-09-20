@@ -1,65 +1,58 @@
 // =========================================================================
-//  SAS PLAYER — APP VERSION (used for cache busting & version enforcement)
+//  SAS PLAYER — APP VERSION (Workers + Durable Objects Architecture)
 // =========================================================================
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '4.0.2';
 
-// Default Studio Playlist
+// Default Studio Playlist Fallback
 const DEFAULT_TRACKS = [
-  { id: 'byitAI7kkOM', title: 'Armaan Malik - Dil Mein Ho Tum', addedByName: 'Super Admin', isPinned: false },
-  { id: 'W1y8blwMLxY', title: 'Jubin Nautiyal - Barbaad', addedByName: 'Rahul (iPhone)', isPinned: false },
-  { id: '2FPTVYj3ouE', title: 'Khaali Salam Dua', addedByName: 'Super Admin', isPinned: false },
-  { id: 'ia5CdcuqSWk', title: 'Terre Pyaar Mein', addedByName: 'Guest DJ', isPinned: false },
-  { id: 'BvPNWCzQMec', title: 'Bekhudi', addedByName: 'Super Admin', isPinned: false },
-  { id: 'kKljXVVkgS4', title: 'Sanam Teri kasam', addedByName: 'Super Admin', isPinned: false },
-  { id: 'ztPa6vkM-yY', title: 'Guzarish', addedByName: 'Super Admin', isPinned: false },
-  { id: 'u4wmmGrI4pE', title: 'Chaand Jaise Mukhde Pe Bindiya Sitara', addedByName: 'Super Admin', isPinned: false },
-  { id: 'TqR_jWfHW4g', title: 'Humnava', addedByName: 'Super Admin', isPinned: false },
-  { id: 'ayzN5Il56co', title: 'Chori Chori Yun Jab Ho', addedByName: 'Super Admin', isPinned: false },
-  { id: 'R7spJ7YjNOY', title: 'Love Letter', addedByName: 'Super Admin', isPinned: false },
-  { id: '1a--6kZ8LCY', title: 'Hug Me', addedByName: 'Super Admin', isPinned: false },
-  { id: 'AbkEmIgJMcU', title: 'Pal Pal', addedByName: 'Super Admin', isPinned: false },
-  { id: 'wCTmWy43HgM', title: 'Haseen', addedByName: 'Super Admin', isPinned: false },
-  { id: 'QRwLbf3PwO8', title: 'Qayade Se', addedByName: 'Super Admin', isPinned: false },
-  { id: 'yHJf8MSPHk0', title: 'Baatein ye Kabhi na', addedByName: 'Super Admin', isPinned: false }
+  { id: 'byitAI7kkOM', title: 'Armaan Malik - Dil Mein Ho Tum', addedByName: 'SAS', isPinned: false },
+  { id: 'W1y8blwMLxY', title: 'Jubin Nautiyal - Barbaad', addedByName: 'SAS', isPinned: false },
+  { id: '2FPTVYj3ouE', title: 'Khaali Salam Dua', addedByName: 'SAS', isPinned: false },
+  { id: 'ia5CdcuqSWk', title: 'Terre Pyaar Mein', addedByName: 'SAS', isPinned: false },
+  { id: 'BvPNWCzQMec', title: 'Bekhudi', addedByName: 'SAS', isPinned: false },
+  { id: 'kKljXVVkgS4', title: 'Sanam Teri kasam', addedByName: 'SAS', isPinned: false },
+  { id: 'ztPa6vkM-yY', title: 'Guzarish', addedByName: 'SAS', isPinned: false },
+  { id: 'u4wmmGrI4pE', title: 'Chaand Jaise Mukhde Pe Bindiya Sitara', addedByName: 'SAS', isPinned: false },
+  { id: 'TqR_jWfHW4g', title: 'Humnava', addedByName: 'SAS', isPinned: false },
+  { id: 'ayzN5Il56co', title: 'Chori Chori Yun Jab Ho', addedByName: 'SAS', isPinned: false },
+  { id: 'R7spJ7YjNOY', title: 'Love Letter', addedByName: 'SAS', isPinned: false },
+  { id: '1a--6kZ8LCY', title: 'Hug Me', addedByName: 'SAS', isPinned: false },
+  { id: 'AbkEmIgJMcU', title: 'Pal Pal', addedByName: 'SAS', isPinned: false },
+  { id: 'wCTmWy43HgM', title: 'Haseen', addedByName: 'SAS', isPinned: false },
+  { id: 'QRwLbf3PwO8', title: 'Qayade Se', addedByName: 'SAS', isPinned: false },
+  { id: 'yHJf8MSPHk0', title: 'Baatein ye Kabhi na', addedByName: 'SAS', isPinned: false }
 ];
 
 let videoLinks = JSON.parse(JSON.stringify(DEFAULT_TRACKS));
 
-let player;
+let player = null;
 let isPlayerReady = false;
 let lastLoadedVideoId = '';
-let pendingVideoId = null;
-let pendingIsPlaying = false;
-let pendingStartSeconds = 0;
-let timeSyncInterval = null;
+let ytApiReady = false;
 let currentIndex = 0;
 let usingYouTubePlaylist = false;
-let pendingCommandIssuer = null;
-let lastCommandIssuer = null;
-let lastNowPlayingData = null;
-// Player creation is gated on this instead of firing the instant YouTube's
-// iframe_api script loads — see onYouTubeIframeAPIReady() / tryInitPlayer().
-let ytApiReady = false;
-let nowPlayingSnapshotArrived = false;
-let playerCreationAttempted = false;
-// Set once Firebase has authoritatively told us this device's real role
-// (super_admin / admin / guest) — see listenToDeviceStatus(). Used to decide
-// real player vs. thumbnail-only view without ever trusting an unconfirmed
-// localStorage guess for that decision.
-let roleConfirmed = false;
-let currentThumbnailVideoId = null;
-let lastVolumeData = null;
 let activePlaylistId = '';
 let activePlaylistTitle = '';
 const titleCache = {};
 let dragFromIndex = -1;
 let isLightMode = false;
 let isThemeAnimating = false;
-let shouldResumeOnFocus = false;
-let expectedPlaybackState = null; // 'playing' | 'paused' | null — for health check recovery
-let healthCheckInterval = null;
-let heartbeatInterval = null;
+let expectedPlaybackState = null;
 let activeQueueFilter = 'all'; // 'all', 'pinned', 'requests'
+let currentThumbnailVideoId = null;
+
+// Auth & Access state (Driven authoritatively by Cloudflare Durable Object)
+let deviceId = null;
+let deviceStatus = 'guest'; // 'guest', 'pending', 'approved', 'revoked'
+let currentUserRole = 'guest'; // 'pending', 'guest', 'admin', 'super_admin'
+let isAdmin = false;
+let isSuperAdmin = false;
+
+// Role-based permission helpers
+function canControlTransport() { return isSuperAdmin || (isAdmin && deviceStatus !== 'revoked'); }
+function canManageQueue() { return isSuperAdmin || (isAdmin && deviceStatus !== 'revoked'); }
+function canAddTracks() { return isSuperAdmin || (isAdmin && deviceStatus !== 'revoked') || (currentUserRole === 'guest' && deviceStatus !== 'pending'); }
+function canModerate() { return isSuperAdmin; }
 
 const disk = document.getElementById('spinning-disk');
 const playPauseBtn = document.getElementById('play-pause-btn');
@@ -113,7 +106,6 @@ async function toggleTheme() {
     themeToggleBtn.disabled = false;
   }
   isThemeAnimating = false;
-  logActivity('Switched theme to ' + (isLightMode ? 'Light mode' : 'Dark obsidian'), 'info', /* forceBroadcast= */ false);
 }
 
 // Activity & Telemetry Realtime Stream
@@ -121,6 +113,7 @@ const EVENT_ICONS = {
   play: { icon: 'fa-play', cls: 'type-play' },
   pause: { icon: 'fa-pause', cls: 'type-pause' },
   skip: { icon: 'fa-forward', cls: 'type-skip' },
+  prev: { icon: 'fa-backward', cls: 'type-skip' },
   volume: { icon: 'fa-volume-up', cls: 'type-volume' },
   pin: { icon: 'fa-thumbtack', cls: 'type-pin' },
   add: { icon: 'fa-plus-circle', cls: 'type-add' },
@@ -130,36 +123,116 @@ const EVENT_ICONS = {
 };
 
 const PAGE_BOOT_TIME = Date.now();
+const seenEventIds = new Set();
 
-function logActivity(text, type = 'info', forceBroadcast = true) {
-  const actorName = getDeviceName(deviceId);
-  const eventObj = {
-    actor: actorName,
-    role: currentUserRole || 'guest',
-    type: type,
-    detail: text,
-    timestamp: Date.now(),
-    deviceId: deviceId
+function formatActivityEventName(ev) {
+  if (!ev) return '';
+  const type = (ev.type || '').toLowerCase();
+  const detail = (ev.detail || '').trim();
+
+  // Play / Resume actions
+  if (type === 'play') {
+    if (!detail || detail.toLowerCase().startsWith('now playing')) {
+      return 'Play';
+    }
+    if (detail === 'Play' || detail === 'Resumed playback' || detail === 'Selected Track') {
+      return detail;
+    }
+    // If detail is raw track title from legacy logs, display Play
+    return 'Play';
+  }
+
+  // Pause action
+  if (type === 'pause') {
+    return 'Pause';
+  }
+
+  // Skip / Next / Prev actions
+  if (type === 'skip' || type === 'next') {
+    return detail === 'Previous Track' ? 'Previous Track' : 'Next Track';
+  }
+  if (type === 'prev') {
+    return 'Previous Track';
+  }
+
+  // Seek action
+  if (type === 'seek') {
+    return 'Seeked Track';
+  }
+
+  // Use descriptive detail if already present (e.g. Set master volume..., Added..., Pinned...)
+  if (detail) {
+    return detail;
+  }
+
+  // Friendly type fallbacks
+  const typeLabels = {
+    volume: 'Volume Changed',
+    add: 'Added Track',
+    clear: 'Cleared Queue',
+    pin: 'Pinned Track',
+    admin: 'Role Updated',
+    info: 'Connected to Station'
   };
 
-  renderStreamEventCard(eventObj, /* isLocal= */ true);
-
-  if (forceBroadcast && db && isAuthorizedUser()) {
-    db.ref(DB_ROOT + '/events').push(eventObj);
-  }
+  return typeLabels[type] || (type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Action');
 }
 
-function renderStreamEventCard(ev, isLocal = false) {
+function renderActivityStream(activities) {
   const stream = document.getElementById('live-activity-stream');
   if (!stream) return;
 
+  // Guests see a private station notice; only authorized admins see real-time radar
+  if (!isAuthorizedUser()) {
+    stream.innerHTML = `
+      <div style="padding: 24px 16px; text-align: center; color: var(--text-muted); font-size: 11.5px; line-height: 1.6;">
+        <i class="fas fa-user-shield" style="font-size: 20px; opacity: 0.35; margin-bottom: 8px; display: block;"></i>
+        <div style="font-weight: 600; color: var(--text-dim); margin-bottom: 4px;">Private Station Stream</div>
+        Real-time activity radar is reserved for authorized station admins.
+      </div>`;
+    return;
+  }
+
+  if (!Array.isArray(activities)) return;
+
+  stream.innerHTML = '';
+  activities.slice(0, 25).forEach((ev) => {
+    const isNew = !seenEventIds.has(ev.id);
+    seenEventIds.add(ev.id);
+
+    const card = buildActivityCard(ev);
+    stream.appendChild(card);
+
+    // Show floating toast for recent events from other devices
+    const isRecent = ev.at && (Date.now() - ev.at < 20000);
+    const isSelf = ev.actorName && (ev.actorName === getDeviceName());
+    if (isNew && isRecent && !isSelf) {
+      showEventToast(ev);
+    } else if (!isSelf && ev.type === 'volume') {
+      updateEventToast(ev);
+    }
+  });
+}
+
+function updateEventToast(ev) {
+  const hub = document.getElementById('event-toast-hub');
+  if (!hub) return;
+  const existing = hub.querySelector(`[data-event-id="${ev.id}"]`) || hub.querySelector('[data-event-type="volume"]');
+  if (existing) {
+    const detailEl = existing.querySelector('.event-detail-text');
+    if (detailEl) detailEl.textContent = formatActivityEventName(ev);
+  }
+}
+
+function buildActivityCard(ev) {
   const typeConfig = EVENT_ICONS[ev.type] || EVENT_ICONS.info;
-  const timeStr = new Date(ev.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const isSelf = ev.deviceId === deviceId;
-  const roleLabel = (ev.role || 'guest').replace('_', ' ');
+  const timeStr = new Date(ev.at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const isSelf = ev.actorName === getDeviceName();
+  const eventLabel = formatActivityEventName(ev);
 
   const card = document.createElement('div');
-  card.className = 'stream-event-card fresh-flash';
+  card.className = 'stream-event-card';
+  card.dataset.eventId = ev.id || '';
   card.innerHTML = `
     <div class="event-icon-box ${typeConfig.cls}">
       <i class="fas ${typeConfig.icon}"></i>
@@ -167,41 +240,32 @@ function renderStreamEventCard(ev, isLocal = false) {
     <div class="event-content-block">
       <div class="event-actor-row">
         <div class="event-actor-identity">
-          <span>${escapeHtml(ev.actor || 'Device')}</span>
+          <span>${escapeHtml(ev.actorName || 'Device')}</span>
           ${isSelf ? '<span style="font-size:9px;color:var(--text-muted);font-weight:normal;">(You)</span>' : ''}
-          <span class="event-role-chip ${escapeHtml(ev.role || 'guest')}">${escapeHtml(roleLabel)}</span>
         </div>
         <span class="event-time">${timeStr}</span>
       </div>
-      <div class="event-detail-text">${escapeHtml(ev.detail || '')}</div>
+      <div class="event-detail-text">${escapeHtml(eventLabel)}</div>
     </div>
   `;
-
-  stream.prepend(card);
-  if (stream.children.length > 20) {
-    stream.removeChild(stream.lastChild);
-  }
-
-  // Show floating toast for events from OTHER devices.
-  // Freshness window: 30s after page boot (guarantees unseen events while page was loading show toast at least once)
-  const isFreshLiveEvent = ev.timestamp && (ev.timestamp >= PAGE_BOOT_TIME - 30000) && (Date.now() - ev.timestamp < 30000);
-  if (!isLocal && !isSelf && ev.detail && isFreshLiveEvent) {
-    showEventToast(ev);
-  }
+  return card;
 }
 
 function showEventToast(ev) {
+  if (!isAuthorizedUser()) return; // Never show floating broadcast toasts to guests
   const hub = document.getElementById('event-toast-hub');
   if (!hub) return;
 
-  // Cap maximum concurrent visible toasts to 2
   while (hub.children.length >= 2) {
     hub.removeChild(hub.firstChild);
   }
 
   const typeConfig = EVENT_ICONS[ev.type] || EVENT_ICONS.info;
+  const eventLabel = formatActivityEventName(ev);
   const toast = document.createElement('div');
   toast.className = 'event-toast-card';
+  toast.dataset.eventId = ev.id || '';
+  toast.dataset.eventType = ev.type || '';
   toast.innerHTML = `
     <div class="event-icon-box ${typeConfig.cls}" style="width:32px;height:32px;font-size:13px;">
       <i class="fas ${typeConfig.icon}"></i>
@@ -209,12 +273,11 @@ function showEventToast(ev) {
     <div class="event-content-block">
       <div class="event-actor-row">
         <div class="event-actor-identity" style="font-size:12px;">
-          <span>${escapeHtml(ev.actor || 'Device')}</span>
-          <span class="event-role-chip ${escapeHtml(ev.role || 'guest')}">${escapeHtml((ev.role || 'guest').replace('_', ' '))}</span>
+          <span>${escapeHtml(ev.actorName || 'Station')}</span>
         </div>
         <span class="event-time">Just now</span>
       </div>
-      <div class="event-detail-text" style="font-size:12px;color:var(--text-main);">${escapeHtml(ev.detail || '')}</div>
+      <div class="event-detail-text" style="font-size:12px;color:var(--text-main);">${escapeHtml(eventLabel)}</div>
     </div>
     <div class="toast-progress-bar"></div>
   `;
@@ -225,7 +288,6 @@ function showEventToast(ev) {
   };
 
   hub.appendChild(toast);
-
   setTimeout(() => {
     if (toast.parentNode) {
       toast.classList.add('fade-out');
@@ -234,254 +296,136 @@ function showEventToast(ev) {
   }, 3800);
 }
 
-function listenToLiveEvents() {
-  if (!db) return;
-  const eventsRef = db.ref(DB_ROOT + '/events');
-
-  eventsRef.limitToLast(12).on('child_added', (snap) => {
-    const ev = snap.val();
-    if (!ev) return;
-    if (!isAuthorizedUser()) return;
-    if (ev.deviceId === deviceId && ev.timestamp >= PAGE_BOOT_TIME) return;
-    renderStreamEventCard(ev, /* isLocal= */ false);
-  });
-}
-
 // Initialize YouTube Player
-//
-// This callback fires the instant YouTube's iframe_api script finishes
-// loading — independent of, and usually well before, our own Firebase
-// connection (which only starts on window 'load', after every other page
-// resource has finished). Building the player immediately here meant
-// lastNowPlayingData was still null most of the time on a fresh load, so
-// non-super-admin devices started at 0:00 on a fallback video and only
-// jumped to the right spot once Firebase data trickled in later — a visible
-// "restart from the beginning" every time a browser/tab reloads from scratch.
-//
-// Fix: just flip a readiness flag here, and let tryInitPlayer() decide when
-// it's actually safe to build the player (see below).
 function onYouTubeIframeAPIReady() {
   ytApiReady = true;
-  tryInitPlayer();
+  initYouTubePlayer();
 }
 
-// Give Firebase a brief window to deliver the first nowPlaying snapshot
-// before giving up and building the player anyway (so we never hang forever
-// if Firebase is slow, offline, or blocked).
-let playerInitTimedOut = false;
-setTimeout(() => {
-  playerInitTimedOut = true;
-  tryInitPlayer();
-}, 1500);
+let isInitializingPlayer = false;
 
-function tryInitPlayer() {
-  if (playerCreationAttempted || !ytApiReady) return;
+function initYouTubePlayer() {
+  if (!ytApiReady || player || isInitializingPlayer) return;
 
-  const savedRole = localStorage.getItem('sas_user_role');
-  const likelySuper = (savedRole === 'super_admin');
-
-  // Fast path: a returning Super Admin drives playback themselves and
-  // shouldn't wait on anything — build the real player immediately.
-  if (likelySuper) {
-    playerCreationAttempted = true;
-    createYouTubePlayer();
+  // Super Admin and Guest both get the live YouTube player with audio.
+  // Admin and Pending roles use thumbnail mode — no iframe needed.
+  if (currentUserRole === 'admin' || currentUserRole === 'pending') {
     return;
   }
 
-  // Everyone else: wait for Firebase to authoritatively confirm the role
-  // before deciding. This matters most for a first-time Super Admin visit
-  // (no localStorage yet) — they still need the real player, not a
-  // thumbnail. Time out after a short wait so we're never stuck if
-  // Firebase is slow or offline.
-  if (roleConfirmed || playerInitTimedOut) {
-    playerCreationAttempted = true;
-    if (isSuperAdmin) {
-      createYouTubePlayer();
-    } else {
-      // Non-super-admin devices (Admin + approved guests) no longer run a
-      // real, synced YouTube player at all — trying to keep a second video
-      // element in lockstep with the host over the network was the actual
-      // source of the stutter/drift problems. They just show a static
-      // thumbnail of whatever's playing; controls still work via
-      // sendCommand(), which was already independent of any local player.
-      createThumbnailView();
+  isInitializingPlayer = true;
+  const initialVideoId = (videoLinks[currentIndex] ? videoLinks[currentIndex].id : 'byitAI7kkOM');
+
+  try {
+    player = new YT.Player('yt-iframe', {
+      height: '100%',
+      width: '100%',
+      videoId: initialVideoId,
+      playerVars: {
+        'autoplay': 0,
+        'mute': 0,
+        'controls': 0,
+        'rel': 0,
+        'playsinline': 1,
+        'enablejsapi': 1,
+        'disablekb': 1,
+        'iv_load_policy': 3,
+        'modestbranding': 1
+      },
+      events: {
+        'onReady': (e) => {
+          isInitializingPlayer = false;
+          onPlayerReady(e);
+        },
+        'onStateChange': onPlayerStateChange,
+        'onError': (e) => {
+          isInitializingPlayer = false;
+          console.warn('[SAS Player] YT Player Error:', e.data);
+        }
+      }
+    });
+  } catch (err) {
+    isInitializingPlayer = false;
+    console.warn('[SAS Player] Failed to create player:', err);
+  }
+}
+
+function onPlayerReady() {
+  isPlayerReady = true;
+
+  if (player && typeof player.unMute === 'function') {
+    player.unMute();
+  }
+
+  if (isSuperAdmin) {
+    if (player && typeof player.getDuration === 'function') {
+      const dur = player.getDuration() || 0;
+      if (dur > 0) SAS.hostTick(player.getCurrentTime() || 0, dur);
+    }
+
+    // Apply existing state if already received from server
+    if (SAS.state?.nowPlaying?.videoId) {
+      applyNowPlayingToPlayer(SAS.state.nowPlaying);
+    }
+  } else if (!isAuthorizedUser()) {
+    // Guest: ready up first track title
+    if (videoLinks[currentIndex]) {
+      updateDisplayTitle(videoLinks[currentIndex].title);
     }
   }
 }
 
-// Called every time Firebase confirms (or updates) this device's role —
-// see listenToDeviceStatus(). Lets a device already showing a thumbnail
-// switch to a real player if promoted to Super Admin mid-session, and vice
-// versa if it eagerly built a real player on a stale localStorage guess
-// that turned out wrong.
-function markRoleConfirmed() {
-  roleConfirmed = true;
-  tryInitPlayer();
-  reconcilePlayerModeWithRole();
-}
+function onPlayerStateChange(event) {
+  const isPlaying = (event.data === YT.PlayerState.PLAYING);
 
-function reconcilePlayerModeWithRole() {
-  if (!playerCreationAttempted) return; // tryInitPlayer() hasn't decided yet
+  // Expected playback state for background recovery
+  if (isPlaying) {
+    expectedPlaybackState = 'playing';
+  } else if (event.data === YT.PlayerState.PAUSED) {
+    expectedPlaybackState = 'paused';
+  }
 
-  if (isSuperAdmin && !player) {
-    // Was thumbnail-only, just got promoted to Super Admin — needs the
-    // real player now to actually drive playback.
-    const thumbImg = document.getElementById('np-thumbnail');
-    if (thumbImg) thumbImg.remove();
-    createYouTubePlayer();
-  } else if (!isSuperAdmin && player && !document.getElementById('np-thumbnail')) {
-    // Had eagerly built a real player on a stale "was super admin"
-    // localStorage guess (or got demoted since) — tear it down and fall
-    // back to the thumbnail view instead of leaving a dead, unsynced iframe.
-    try { if (typeof player.destroy === 'function') player.destroy(); } catch (_) { }
-    player = null;
-    // destroy() removes the iframe entirely — including the 'yt-iframe' id
-    // it inherited from the original placeholder div — so rebuild that
-    // placeholder before the thumbnail view tries to attach to it.
-    const stageContainer = document.getElementById('player-container');
-    if (stageContainer && !document.getElementById('yt-iframe')) {
-      const freshDiv = document.createElement('div');
-      freshDiv.id = 'yt-iframe';
-      stageContainer.appendChild(freshDiv);
+  // Synchronize Super Admin host player state with the room and UI
+  if (isSuperAdmin) {
+    if (isPlaying) {
+      if (SAS.state?.nowPlaying && !SAS.state.nowPlaying.isPlaying) {
+        SAS.play();
+      }
+      updatePlaybackUIState(true);
+    } else if (event.data === YT.PlayerState.PAUSED) {
+      if (SAS.state?.nowPlaying?.isPlaying) {
+        SAS.pause();
+      }
+      updatePlaybackUIState(false);
     }
-    createThumbnailView();
+  }
+
+  // Broadcast duration to all other devices on playback start/buffer
+  if (isSuperAdmin && (isPlaying || event.data === YT.PlayerState.BUFFERING)) {
+    if (player && typeof player.getDuration === 'function') {
+      const dur = player.getDuration() || 0;
+      if (dur > 0) {
+        SAS.hostTick(player.getCurrentTime() || 0, dur);
+      }
+    }
+  }
+
+  // If host player finishes playing a track, advance the entire room
+  if (isSuperAdmin && event.data === YT.PlayerState.ENDED) {
+    SAS.next();
+  } else if (!isAuthorizedUser() && event.data === YT.PlayerState.ENDED) {
+    // Guest player advances locally
+    playNext();
   }
 }
 
-// Injects the CSS for the thumbnail progress overlay exactly once. Kept as
-// a JS-injected <style> tag rather than sas-player-styles.css so this view
-// doesn't depend on that file being updated — it's self-contained here.
-function injectThumbnailProgressStyles() {
-  if (document.getElementById('thumb-progress-styles')) return;
-  const style = document.createElement('style');
-  style.id = 'thumb-progress-styles';
-  style.textContent = `
-    .thumb-progress-wrap {
-      position: relative;
-      width: 100%;
-      height: 100%;
-      background: #000;
-    }
-    .thumb-progress-img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-      background: #000;
-    }
-    .thumb-progress-overlay {
-      position: absolute;
-      left: 0; right: 0; bottom: 0;
-      padding: 18px 18px 14px;
-      background: linear-gradient(180deg, transparent, rgba(0,0,0,0.72) 55%, rgba(0,0,0,0.88));
-      pointer-events: none;
-    }
-    .thumb-progress-track {
-      position: relative;
-      height: 4px;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.22);
-      margin-bottom: 8px;
-    }
-    .thumb-progress-fill {
-      position: absolute;
-      top: 0; left: 0; bottom: 0;
-      width: 0%;
-      border-radius: 999px;
-      background: linear-gradient(90deg, #4fd1c5, #e3a857);
-      transition: width 1s linear;
-    }
-    .thumb-progress-fill::after {
-      content: '';
-      position: absolute;
-      right: -4px; top: 50%;
-      width: 9px; height: 9px;
-      background: #e3a857;
-      border-radius: 50%;
-      transform: translateY(-50%);
-      box-shadow: 0 0 8px rgba(227,168,87,0.85);
-    }
-    .thumb-progress-labels {
-      display: flex;
-      justify-content: space-between;
-      font-family: var(--font-mono, 'JetBrains Mono', monospace);
-      font-size: 11px;
-      color: #f2f0ea;
-      letter-spacing: 0.02em;
-    }
-  `;
-  document.head.appendChild(style);
-}
+// Track Timer (Reads directly from player if host, or derives from projected position)
+let serverDuration = 0;
 
-// The old text timer (deck-track-timer, next to the title) is only
-// redundant for thumbnail-only viewers, who now get current/duration on
-// the thumbnail's own progress bar. Super Admin has no thumbnail overlay
-// (their real YouTube iframe has no room for one), so they still need it —
-// this just toggles which one is showing rather than deleting it outright.
 function setDeckTimerVisible(visible) {
   const el = document.getElementById('deck-track-timer');
   if (el) el.style.display = visible ? '' : 'none';
 }
-
-function createThumbnailView() {
-  const container = document.getElementById('yt-iframe');
-  if (!container) return;
-  container.innerHTML = '';
-
-  setDeckTimerVisible(false);
-  injectThumbnailProgressStyles();
-
-  const wrap = document.createElement('div');
-  wrap.className = 'thumb-progress-wrap';
-
-  const img = document.createElement('img');
-  img.id = 'np-thumbnail';
-  img.className = 'thumb-progress-img';
-  img.alt = 'Now playing thumbnail';
-  wrap.appendChild(img);
-
-  const overlay = document.createElement('div');
-  overlay.className = 'thumb-progress-overlay';
-  overlay.innerHTML = `
-    <div class="thumb-progress-track">
-      <div class="thumb-progress-fill" id="thumb-progress-fill"></div>
-    </div>
-    <div class="thumb-progress-labels">
-      <span id="thumb-progress-current">0:00</span>
-      <span id="thumb-progress-duration">--:--</span>
-    </div>
-  `;
-  wrap.appendChild(overlay);
-
-  container.appendChild(wrap);
-
-  // If we already know what's playing (e.g. this ran after nowPlaying data
-  // arrived), show it right away instead of a blank frame.
-  if (lastNowPlayingData) {
-    const vid = lastNowPlayingData.videoId ||
-      (videoLinks[lastNowPlayingData.trackIndex] ? videoLinks[lastNowPlayingData.trackIndex].id : null);
-    if (vid) updateThumbnailForVideo(vid);
-  }
-}
-
-function updateThumbnailForVideo(videoId) {
-  if (!videoId || videoId === currentThumbnailVideoId) return;
-  currentThumbnailVideoId = videoId;
-  const img = document.getElementById('np-thumbnail');
-  if (!img) return;
-  // hqdefault.jpg exists for every public video; maxresdefault.jpg doesn't
-  // (only present for uploads over a certain resolution), so this is the
-  // safe universal choice.
-  img.src = 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg';
-}
-
-// =========================================================================
-//  TRACK TIMER
-// =========================================================================
-// Super Admin reads its own player directly. Everyone else (thumbnail-only
-// devices, with no local player at all) derives it the same way the old
-// video-sync code used to — from the last broadcast's currentTime/timestamp
-// plus elapsed real time — just for display now, not for seeking anything.
 
 function formatTime(seconds) {
   if (!isFinite(seconds) || seconds < 0) seconds = 0;
@@ -498,36 +442,29 @@ let trackTimerInterval = null;
 function startTrackTimer() {
   if (trackTimerInterval) clearInterval(trackTimerInterval);
   trackTimerInterval = setInterval(updateTrackTimerDisplay, 1000);
-  updateTrackTimerDisplay(); // don't wait a full second for the first paint
+  updateTrackTimerDisplay();
 }
 
 function updateTrackTimerDisplay() {
   const curEl = document.getElementById('timer-current');
   const durEl = document.getElementById('timer-duration');
-  if (!curEl || !durEl) return;
 
   let current = 0;
   let duration = 0;
 
-  if (isSuperAdmin && player && typeof player.getCurrentTime === 'function') {
+  if ((isSuperAdmin || !isAuthorizedUser()) && player && typeof player.getCurrentTime === 'function') {
     current = player.getCurrentTime() || 0;
     duration = (typeof player.getDuration === 'function') ? (player.getDuration() || 0) : 0;
-  } else if (lastNowPlayingData) {
-    const data = lastNowPlayingData;
-    current = typeof data.currentTime === 'number' ? data.currentTime : 0;
-    if (data.isPlaying && data.timestamp) {
-      const elapsed = (serverNow() - data.timestamp) / 1000;
-      if (elapsed > 0 && elapsed < 600) current += elapsed;
-    }
-    duration = typeof data.duration === 'number' ? data.duration : 0;
+  } else {
+    current = SAS.projectedPosition() || 0;
+    duration = serverDuration || SAS.state?.nowPlaying?.durationSec || 0;
     if (duration > 0) current = Math.min(current, duration);
   }
 
-  curEl.textContent = formatTime(current);
-  durEl.textContent = duration > 0 ? formatTime(duration) : '--:--';
+  if (curEl) curEl.textContent = formatTime(current);
+  if (durEl) durEl.textContent = duration > 0 ? formatTime(duration) : '--:--';
 
-  // Mirror the same numbers onto the thumbnail-only progress overlay
-  // (Admins / guests with no local player) when it's present in the DOM.
+  // Mirror onto thumbnail overlay progress bar for Admins and guests
   const thumbFill = document.getElementById('thumb-progress-fill');
   const thumbCur = document.getElementById('thumb-progress-current');
   const thumbDur = document.getElementById('thumb-progress-duration');
@@ -537,259 +474,6 @@ function updateTrackTimerDisplay() {
   }
   if (thumbCur) thumbCur.textContent = formatTime(current);
   if (thumbDur) thumbDur.textContent = duration > 0 ? formatTime(duration) : '--:--';
-}
-
-// =========================================================================
-//  WAVEFORM — driven by real playback position, not a generic CSS loop
-// =========================================================================
-// NOTE: a YouTube iframe embed is cross-origin, so the Web Audio API's
-// AnalyserNode (the thing that would give true frequency-bin data for a
-// "real" reactive waveform) has no access to its audio stream — there's no
-// captureStream()/createMediaElementSource() path across that boundary.
-// This can't be a genuine audio-reactive visualizer as long as playback
-// goes through the YouTube iframe.
-//
-// What this does instead: every bar's height is a deterministic function of
-// the *actual* synced currentTime (same value the timer/progress bar use),
-// so every connected device's bars move identically and in lockstep with
-// real playback — rather than each device running its own disconnected,
-// endlessly-looping CSS keyframe animation. Height also scales with master
-// volume and goes flat when paused.
-
-function seededPseudoRandom(seed) {
-  const x = Math.sin(seed * 12.9898) * 43758.5453;
-  return x - Math.floor(x);
-}
-
-let waveformInterval = null;
-function startWaveformAnimation() {
-  if (waveformInterval) clearInterval(waveformInterval);
-  waveformInterval = setInterval(updateWaveformBars, 160);
-  updateWaveformBars();
-}
-
-function updateWaveformBars() {
-  const waveform = document.getElementById('waveform-box');
-  if (!waveform) return;
-  const bars = waveform.querySelectorAll('.waveform-bar');
-  if (!bars.length) return;
-
-  let current = 0;
-  let playing = false;
-
-  if (isSuperAdmin && player && typeof player.getCurrentTime === 'function') {
-    current = player.getCurrentTime() || 0;
-    playing = typeof player.getPlayerState === 'function' && player.getPlayerState() === YT.PlayerState.PLAYING;
-  } else if (lastNowPlayingData) {
-    const data = lastNowPlayingData;
-    current = typeof data.currentTime === 'number' ? data.currentTime : 0;
-    playing = !!data.isPlaying;
-    if (playing && data.timestamp) {
-      const elapsed = (serverNow() - data.timestamp) / 1000;
-      if (elapsed > 0 && elapsed < 600) current += elapsed;
-    }
-  }
-
-  const volumeEl = document.getElementById('master-volume-slider');
-  const volumeScale = volumeEl ? (parseInt(volumeEl.value, 10) / 100) : 1;
-
-  bars.forEach((bar, i) => {
-    if (!playing) {
-      bar.style.height = '4px';
-      return;
-    }
-    // Ticks every ~166ms of playback time (current * 6), offset per bar so
-    // they don't all move together — still fully deterministic from
-    // currentTime, so it stays in sync across every device.
-    const seed = Math.floor(current * 6) + i * 17;
-    const amplitude = 0.25 + seededPseudoRandom(seed) * 0.75;
-    const heightPx = 4 + amplitude * 16 * Math.max(0.3, Math.min(1, volumeScale));
-    bar.style.height = heightPx.toFixed(1) + 'px';
-  });
-}
-
-function createYouTubePlayer() {
-  setDeckTimerVisible(true);
-  const initialId = (lastNowPlayingData && lastNowPlayingData.videoId)
-    ? lastNowPlayingData.videoId
-    : (pendingVideoId || (videoLinks[currentIndex] ? videoLinks[currentIndex].id : 'byitAI7kkOM'));
-  const savedRole = localStorage.getItem('sas_user_role');
-  const isSuper = (savedRole === 'super_admin');
-
-  // For non-super-admin devices: if we already have the host's now-playing
-  // data at this point (e.g. on a page refresh, once the nowPlaying listener's
-  // first snapshot has already arrived), work out the real elapsed playback
-  // position up front. Otherwise the iframe always starts loading at 0:00 and
-  // the video visibly "restarts from the beginning" every time, only catching
-  // up later via drift correction instead of loading in the right place immediately.
-  let initialStartSeconds = 0;
-  if (!isSuper && lastNowPlayingData && lastNowPlayingData.videoId === initialId) {
-    initialStartSeconds = (typeof lastNowPlayingData.currentTime === 'number') ? lastNowPlayingData.currentTime : 0;
-    if (lastNowPlayingData.isPlaying && lastNowPlayingData.timestamp) {
-      const elapsed = (serverNow() - lastNowPlayingData.timestamp) / 1000;
-      if (elapsed > 0 && elapsed < 600) initialStartSeconds += elapsed;
-    }
-  }
-
-  player = new YT.Player('yt-iframe', {
-    height: '100%',
-    width: '100%',
-    videoId: initialId,
-    playerVars: {
-      'autoplay': isSuper ? 0 : 1,
-      'mute': isSuper ? 0 : 1,
-      'start': Math.floor(initialStartSeconds),
-      'controls': 0,
-      'rel': 0,
-      'playsinline': 1,
-      'enablejsapi': 1,
-      'disablekb': 1,
-      'iv_load_policy': 3,
-      'modestbranding': 1
-    },
-    events: {
-      'onReady': onPlayerReady,
-      'onStateChange': onPlayerStateChange,
-      'onError': (e) => {
-        console.warn('[SAS Player] YT Player Error:', e.data);
-      }
-    }
-  });
-}
-
-function onPlayerReady(event) {
-  isPlayerReady = true;
-  // Non-super-admin devices must be muted so browsers permit programmatic autoplay without audio echo
-  if (!isSuperAdmin && player && typeof player.mute === 'function') {
-    player.mute();
-  }
-
-  // If now-playing state is already available from Firebase, apply immediately
-  if (lastNowPlayingData && !isSuperAdmin) {
-    applyNowPlayingUI(lastNowPlayingData);
-  } else if (pendingVideoId) {
-    if (isSuperAdmin) {
-      if (player && player.loadVideoById) {
-        player.loadVideoById(pendingVideoId, pendingStartSeconds || 0);
-      }
-    } else {
-      if (player && typeof player.mute === 'function') player.mute();
-      if (pendingIsPlaying) {
-        if (player && player.loadVideoById) {
-          player.loadVideoById({
-            videoId: pendingVideoId,
-            startSeconds: Math.floor(pendingStartSeconds || 0)
-          });
-          if (pendingStartSeconds > 1) {
-            setTimeout(() => {
-              try {
-                if (player && typeof player.seekTo === 'function') player.seekTo(pendingStartSeconds, true);
-              } catch (_) { }
-            }, 400);
-          }
-        }
-      } else {
-        if (player && player.cueVideoById) {
-          player.cueVideoById({
-            videoId: pendingVideoId,
-            startSeconds: Math.floor(pendingStartSeconds || 0)
-          });
-        }
-      }
-    }
-    lastLoadedVideoId = pendingVideoId;
-    pendingVideoId = null;
-    pendingStartSeconds = 0;
-  }
-}
-
-function insertTrack(rawInput, addedByActor = null) {
-  if (!rawInput) return;
-  const urls = rawInput.trim().split(/\s+/).filter(Boolean);
-  const actor = addedByActor || getDeviceName(deviceId);
-
-  // Check for direct video tracks first
-  const parsedTracks = [];
-  urls.forEach((url) => {
-    const videoId = extractVideoID(url);
-    if (videoId) {
-      parsedTracks.push({
-        id: videoId,
-        title: '',
-        addedByName: actor,
-        isPinned: false
-      });
-    }
-  });
-
-  // Case 1: Direct Video Tracks Found
-  if (parsedTracks.length > 0) {
-    const wasEmpty = videoLinks.length === 0;
-
-    if (usingYouTubePlaylist) {
-      syncPlaylistFromPlayer();
-      usingYouTubePlaylist = false;
-      activePlaylistId = '';
-      activePlaylistTitle = '';
-    }
-
-    videoLinks.push(...parsedTracks);
-
-    if (wasEmpty) {
-      currentIndex = 0;
-      initPlaylist();
-      const initialTitle = parsedTracks[0].title || 'Loading track title...';
-      updateDisplayTitle(initialTitle, /* broadcast= */ true);
-      if (isSuperAdmin) {
-        loadVideo(0);
-      }
-    } else {
-      initPlaylist();
-      updatePlaylistUI();
-    }
-
-    hydrateVideoTitles();
-    broadcastPlaylist();
-    logActivity(`Added ${parsedTracks.length} track(s) to master queue`, 'add');
-    return;
-  }
-
-  // Case 2: Pure playlist URL
-  const playlistId = urls.length === 1 ? extractPlaylistID(urls[0]) : null;
-  if (playlistId) {
-    if (isSuperAdmin) {
-      usingYouTubePlaylist = true;
-      activePlaylistId = playlistId;
-      videoLinks = [];
-      currentIndex = 0;
-      initPlaylist();
-      loadYouTubePlaylist(playlistId, 0);
-    }
-    logActivity(`Loaded YouTube Playlist (${playlistId})`, 'add');
-    return;
-  }
-
-  alert("Please enter valid YouTube video URL(s) or a playlist URL.");
-}
-
-function addLink() {
-  const input = document.getElementById('link-input');
-  if (!input) return;
-  const rawInput = input.value.trim();
-  if (!rawInput) return;
-  insertTrack(rawInput, getDeviceName(deviceId));
-  input.value = '';
-}
-
-function extractVideoID(url) {
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-  const match = url.match(regExp);
-  return (match && match[2].length === 11) ? match[2] : null;
-}
-
-function extractPlaylistID(url) {
-  const match = url.match(/[?&]list=([^#&\s]+)/);
-  return match ? match[1] : null;
 }
 
 // Master Playback State Synchronizer for All UI Controls
@@ -827,10 +511,6 @@ function updatePlaybackUIState(isPlaying, title = null, trackIndex = null) {
   if (title) {
     const curTitleEl = document.getElementById('current-title');
     if (curTitleEl) curTitleEl.innerText = title;
-    const sideTitleEl = document.getElementById('sidebar-title');
-    if (sideTitleEl && sideTitleEl.innerText !== '44.1 kHz Hi-Fi YouTube Master Feed') {
-      // Only update sidebar sub-title if it isn't the default static subtitle
-    }
     const remoteTitle = document.getElementById('remote-now-playing-title');
     if (remoteTitle) remoteTitle.textContent = title;
     updateMediaSession(title, 'SAS Player');
@@ -842,347 +522,18 @@ function updatePlaybackUIState(isPlaying, title = null, trackIndex = null) {
   updatePlaylistUI();
 }
 
-// Master Playback State Handler (Fired on Super Admin Host PC)
-function onPlayerStateChange(event) {
-  // Non-super-admin devices display video visually but do NOT broadcast or control queue
-  if (!isSuperAdmin) {
-    if (player && typeof player.mute === 'function' && player.isMuted && !player.isMuted()) {
-      player.mute();
-    }
-    return;
-  }
-
-  const isPlaying = event.data == YT.PlayerState.PLAYING;
-
-  lastCommandIssuer = pendingCommandIssuer || deviceId;
-  pendingCommandIssuer = null;
-
-  // Always get the real title and video ID from the YouTube player (handles track changes)
-  let curTitle = '';
-  let curVideoId = '';
-  if (player && player.getVideoData) {
-    const vd = player.getVideoData();
-    curTitle = (vd && vd.title) ? vd.title.trim() : '';
-    curVideoId = (vd && vd.video_id) ? vd.video_id : '';
-  }
-  if (!curTitle) {
-    const titleEl = document.getElementById('current-title');
-    curTitle = titleEl ? titleEl.innerText : 'SAS Player';
-  }
-
-  // Update currentIndex to match the real video ID currently in the player
-  if (curVideoId) {
-    const matchedIdx = videoLinks.findIndex((v) => v.id === curVideoId);
-    if (matchedIdx !== -1) {
-      currentIndex = matchedIdx;
-    }
-  }
-
-  // Update local video title cache for currently playing track
-  if (curTitle && videoLinks[currentIndex]) {
-    videoLinks[currentIndex].title = curTitle;
-  }
-
-  updatePlaybackUIState(isPlaying, curTitle, currentIndex);
-
-  if (isPlaying) {
-    updateMediaSession(curTitle, 'SAS Player');
-  } else {
-    clearMediaSession();
-  }
-
-  // Broadcast state to remote devices with the real current title
-  if (typeof broadcastNowPlaying === 'function') {
-    broadcastNowPlaying(curTitle, isPlaying);
-  }
-
-  // Track expected playback state for health check recovery
-  if (isPlaying) {
-    expectedPlaybackState = 'playing';
-  } else if (event.data == YT.PlayerState.PAUSED) {
-    expectedPlaybackState = 'paused';
-  }
-
-  // Autoplay next track on end
-  if (event.data == YT.PlayerState.ENDED) {
-    playNext();
-  }
-}
-
-function playNext() {
-  if (isSuperAdmin) {
-    if (usingYouTubePlaylist) {
-      if (player && player.getPlaylistIndex) {
-        const playlist = player.getPlaylist();
-        const playlistIndex = player.getPlaylistIndex();
-        if (Array.isArray(playlist) && playlistIndex < playlist.length - 1) {
-          player.nextVideo();
-        }
-      }
-      return;
-    }
-
-    currentIndex++;
-    if (currentIndex < videoLinks.length) {
-      loadVideo(currentIndex);
-    } else {
-      // End of playlist — loop back to the first track
-      currentIndex = 0;
-      loadVideo(0);
-      logActivity('Playlist looped back to start', 'info');
-    }
-    logActivity('Skipped to next track', 'skip');
-  } else {
-    sendCommand('next');
-    // Update local index/title for instant UI feedback only — do NOT touch the
-    // actual player or lastLoadedVideoId here. The real video load must come
-    // exclusively from the authoritative Firebase nowPlaying sync (applyNowPlayingUI),
-    // otherwise lastLoadedVideoId gets set to a guess that can mismatch the host's
-    // real track and permanently blocks the video from reloading (it looks like
-    // "same video, skip reload" even though the visible video is stale).
-    currentIndex = (currentIndex + 1 < videoLinks.length) ? currentIndex + 1 : 0;
-    const nextVideo = videoLinks[currentIndex];
-    if (nextVideo) {
-      updateDisplayTitle(nextVideo.title);
-      updatePlaylistUI();
-    }
-    logActivity('Skipped to next track', 'skip');
-  }
-}
-
-function playPrev() {
-  if (isSuperAdmin) {
-    if (usingYouTubePlaylist) {
-      if (player && player.getPlaylistIndex) {
-        const playlistIndex = player.getPlaylistIndex();
-        if (playlistIndex > 0) {
-          player.previousVideo();
-        }
-      }
-      return;
-    }
-
-    currentIndex--;
-    if (currentIndex >= 0) {
-      loadVideo(currentIndex);
-    } else {
-      currentIndex = 0;
-    }
-    logActivity('Returned to previous track', 'skip');
-  } else {
-    sendCommand('prev');
-    // See note in playNext(): no local player.loadVideoById here. The video
-    // must only ever be loaded by applyNowPlayingUI() from the real Firebase
-    // state, so lastLoadedVideoId stays accurate and the video actually syncs.
-    currentIndex = (currentIndex - 1 >= 0) ? currentIndex - 1 : 0;
-    const prevVideo = videoLinks[currentIndex];
-    if (prevVideo) {
-      updateDisplayTitle(prevVideo.title);
-      updatePlaylistUI();
-    }
-    logActivity('Returned to previous track', 'skip');
-  }
-}
-
-function toggleMainPlayback() {
-  if (isSuperAdmin && player && player.getPlayerState) {
-    const state = player.getPlayerState();
-    if (state === YT.PlayerState.PLAYING) {
-      player.pauseVideo();
-      sendCommand('pause');
-      logActivity('Paused master playback', 'pause');
-    } else {
-      player.playVideo();
-      sendCommand('play');
-      logActivity('Resumed master playback', 'play');
-    }
-  } else {
-    const isPlaying = lastNowPlayingData ? lastNowPlayingData.isPlaying : (disk && disk.classList.contains('playing'));
-    const willPlay = !isPlaying;
-    sendCommand(willPlay ? 'play' : 'pause');
-    if (player) {
-      if (willPlay && typeof player.playVideo === 'function') {
-        if (player.mute) player.mute();
-        player.playVideo();
-      } else if (!willPlay && typeof player.pauseVideo === 'function') {
-        player.pauseVideo();
-      }
-    }
-    logActivity(willPlay ? 'Resumed master playback' : 'Paused master playback', willPlay ? 'play' : 'pause');
-  }
-}
-
-let volumeLogTimeout = null;
-function syncVolume(level, broadcast = true) {
-  const vol = Math.max(0, Math.min(100, parseInt(level, 10) || 0));
-
-  // 1. Master Deck Volume Slider & Label
-  const masterSlider = document.getElementById('master-volume-slider');
-  if (masterSlider) masterSlider.value = vol;
-  const label = document.getElementById('master-volume-label');
-  if (label) label.textContent = vol + '%';
-
-  // 2. Remote Controller Volume Slider
-  const remSlider = document.getElementById('remote-volume-slider');
-  if (remSlider) remSlider.value = vol;
-
-  // 3. Live Status Bar Volume
-  const liveVol = document.getElementById('live-status-volume');
-  if (liveVol) liveVol.textContent = 'Volume: ' + vol + '%';
-
-  // 4. Host player output
-  if (isSuperAdmin && player && player.setVolume) {
-    player.setVolume(vol);
-  }
-
-  // 5. Broadcast across Firebase network bus
-  if (broadcast) {
-    sendCommand('volume', { level: vol });
-    clearTimeout(volumeLogTimeout);
-    volumeLogTimeout = setTimeout(() => {
-      logActivity(`Adjusted master volume to ${vol}%`, 'volume');
-    }, 600);
-  }
-}
-
-function onMasterVolumeInput(slider) {
-  syncVolume(slider.value, true);
-}
-
-function loadVideo(index) {
-  usingYouTubePlaylist = false;
-  activePlaylistTitle = '';
-  if (!videoLinks[index]) return;
-  currentIndex = index;
-  const video = videoLinks[index];
-  if (isSuperAdmin && player && player.loadVideoById) {
-    player.loadVideoById(video.id);
-  } else if (!isSuperAdmin) {
-    sendCommand('play-video', { videoId: video.id, index });
-    // No local loadVideoById here — same reasoning as playNext()/playPrev():
-    // letting the admin load a guessed video locally sets lastLoadedVideoId
-    // out from under the real Firebase nowPlaying sync, which then thinks the
-    // correct video is "already loaded" and skips reloading it. The video
-    // will load a moment later via applyNowPlayingUI() once the host's
-    // nowPlaying broadcast comes back, which is what keeps it actually synced.
-  }
-  updateDisplayTitle(video.title);
-  updatePlaylistUI();
-}
-
-function loadYouTubePlaylist(playlistId, index = 0) {
-  activePlaylistTitle = 'Playlist: ' + playlistId;
-  if (player && player.loadPlaylist) {
-    player.loadPlaylist({
-      listType: 'playlist',
-      list: playlistId,
-      index: index
-    });
-  }
-  updateDisplayTitle(activePlaylistTitle);
-  syncPlaylistFromPlayer();
-}
-
-function updateDisplayTitle(title, broadcast = false) {
+function updateDisplayTitle(title) {
   const displayTitle = title || 'Select a track to begin';
   const curTitleEl = document.getElementById('current-title');
   const sideTitleEl = document.getElementById('sidebar-title');
   if (curTitleEl) curTitleEl.innerText = displayTitle;
-  if (sideTitleEl) sideTitleEl.innerText = displayTitle;
+  if (sideTitleEl && sideTitleEl.innerText !== '44.1 kHz Hi-Fi YouTube Master Feed') {
+    sideTitleEl.innerText = displayTitle;
+  }
 
   const remoteTitle = document.getElementById('remote-now-playing-title');
   if (remoteTitle) remoteTitle.textContent = displayTitle;
   updateMediaSession(displayTitle, 'SAS Player');
-
-  if (broadcast) {
-    const isPlaying = disk && disk.classList.contains('playing');
-    if (typeof broadcastNowPlaying === 'function') broadcastNowPlaying(displayTitle, isPlaying);
-  }
-}
-
-function refreshDisplayTitleFromPlayer() {
-  if (!player || !player.getVideoData) return;
-  const videoData = player.getVideoData();
-  const playerTitle = videoData && videoData.title ? videoData.title : '';
-  const fallbackTitle = usingYouTubePlaylist
-    ? activePlaylistTitle
-    : (videoLinks[currentIndex] && videoLinks[currentIndex].title);
-  updateDisplayTitle(playerTitle || fallbackTitle);
-}
-
-function loadCustomQueue(tracks, startIndex = 0) {
-  if (!player || !player.loadPlaylist) return;
-  if (!Array.isArray(tracks) || tracks.length === 0) {
-    clearAllTracks();
-    return;
-  }
-
-  const knownTitles = {};
-  videoLinks.forEach((v) => { if (v.id && v.title) knownTitles[v.id] = v.title; });
-
-  usingYouTubePlaylist = false;
-  activePlaylistId = '';
-  activePlaylistTitle = '';
-  videoLinks = tracks.map(track => {
-    const id = (typeof track === 'string') ? track : track.id;
-    const title = (typeof track === 'string') ? knownTitles[id] || '' : track.title || knownTitles[id] || '';
-    const addedByName = (typeof track === 'string') ? '' : track.addedByName || '';
-    return { id, title, addedByName };
-  });
-
-  const ids = videoLinks.map(v => v.id);
-  currentIndex = Math.max(0, Math.min(startIndex, videoLinks.length - 1));
-  initPlaylist();
-  player.loadPlaylist(ids, currentIndex, 0);
-  updateDisplayTitle(videoLinks[currentIndex].title || 'Track ' + (currentIndex + 1));
-  updatePlaylistUI();
-  if (videoLinks.some(v => !v.title)) {
-    hydrateVideoTitles();
-  }
-  broadcastPlaylist();
-}
-
-function loadCustomQueueSilent(tracks, startIndex = 0) {
-  if (!Array.isArray(tracks)) return;
-
-  if (tracks.length === 0) {
-    videoLinks = [];
-    currentIndex = 0;
-    usingYouTubePlaylist = false;
-    activePlaylistId = '';
-    activePlaylistTitle = '';
-    if (player && player.stopVideo) player.stopVideo();
-    updateDisplayTitle('Queue cleared');
-    initPlaylist();
-    return;
-  }
-
-  const knownTitles = {};
-  videoLinks.forEach((v) => { if (v.id && v.title) knownTitles[v.id] = v.title; });
-
-  usingYouTubePlaylist = false;
-  activePlaylistId = '';
-  activePlaylistTitle = '';
-  const wasEmpty = videoLinks.length === 0;
-  videoLinks = tracks.map((track) => ({
-    id: track.id || track,
-    title: track.title || knownTitles[track.id || track] || '',
-    addedByName: track.addedByName || ''
-  }));
-
-  currentIndex = Math.max(0, Math.min(currentIndex, videoLinks.length - 1));
-  initPlaylist();
-  updatePlaylistUI();
-
-  if (wasEmpty && videoLinks.length > 0) {
-    const title = videoLinks[0].title || 'Loading track title...';
-    updateDisplayTitle(title, /* broadcast= */ isSuperAdmin);
-    if (isSuperAdmin && player && player.loadVideoById) {
-      player.loadVideoById(videoLinks[0].id);
-    }
-  }
-
-  hydrateVideoTitles();
 }
 
 // Queue Rendering with Micro-Spinning Vinyl Discs
@@ -1201,7 +552,7 @@ function initPlaylist() {
         <i class="fas fa-compact-disc" style="font-size: 26px; color: var(--text-dim); margin-bottom: 4px;"></i>
         <span class="track-title-text" style="color: var(--text-muted); font-size: 12px;">Queue is currently empty.</span>
       </div>
-      <button onclick="loadDefaultPlaylistAction()" style="background: rgba(0, 242, 254, 0.12); border: 1px solid rgba(0, 242, 254, 0.35); color: var(--accent-cyan); padding: 6px 14px; border-radius: var(--radius-sm); font-size: 11.5px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: var(--transition-fast);">
+      <button onclick="loadDefaultPlaylistAction()" style="background: rgba(0, 242, 254, 0.12); border: 1px solid rgba(0, 242, 254, 0.35); color: var(--accent-cyan); padding: 6px 14px; border-radius: var(--radius-sm); font-size: 11.5px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
         <i class="fas fa-undo"></i> Load Default Playlist
       </button>
     `;
@@ -1214,9 +565,6 @@ function initPlaylist() {
     const isPinned = !!link.isPinned;
     const isRequest = link.addedByName && !link.addedByName.includes('Super Admin') && !link.addedByName.includes('Host');
 
-    // Filter matching:
-    // Pinned: only tracks where isPinned is explicitly true
-    // Requests: songs added remotely by guests/other devices
     if (activeQueueFilter === 'pinned' && !isPinned) return;
     if (activeQueueFilter === 'requests' && !isRequest) return;
 
@@ -1237,11 +585,6 @@ function initPlaylist() {
 
 function updatePlaylistUI() {
   if (!playlistContainer) return;
-  if (usingYouTubePlaylist) {
-    syncPlaylistFromPlayer();
-    return;
-  }
-
   const isAudioPlaying = disk && disk.classList.contains('playing');
   const items = playlistContainer.querySelectorAll('.track-card[data-track-index]');
   items.forEach((item) => {
@@ -1253,31 +596,6 @@ function updatePlaylistUI() {
       microDisk.classList.toggle('spinning', isCurrent && isAudioPlaying);
     }
   });
-}
-
-function syncPlaylistFromPlayer() {
-  if (!usingYouTubePlaylist || !player) return;
-  const playlist = player.getPlaylist && player.getPlaylist();
-  if (!Array.isArray(playlist) || playlist.length === 0) return;
-
-  if (videoLinks.length !== playlist.length) {
-    videoLinks = playlist.map((id) => ({
-      id,
-      title: '',
-      addedByName: getDeviceName(deviceId)
-    }));
-  }
-
-  currentIndex = player.getPlaylistIndex ? player.getPlaylistIndex() : 0;
-  refreshDisplayTitleFromPlayer();
-
-  if (playlistContainer) {
-    playlistContainer.innerHTML = '';
-    videoLinks.forEach((link, index) => {
-      playlistContainer.appendChild(createTrackItem(link, index, index === currentIndex));
-    });
-  }
-  hydrateVideoTitles();
 }
 
 function escapeHtml(text) {
@@ -1305,28 +623,25 @@ async function fetchVideoTitle(videoId) {
 }
 
 async function hydrateVideoTitles() {
+  let changed = false;
   const tasks = videoLinks.map(async (track, index) => {
-    if (!track || track.title) return;
+    if (!track || (track.title && track.title !== 'YouTube Track' && track.title !== 'Untitled')) return;
     const title = await fetchVideoTitle(track.id);
     if (title && videoLinks[index] && videoLinks[index].id === track.id) {
       videoLinks[index].title = title;
+      changed = true;
     }
   });
 
   await Promise.all(tasks);
-  initPlaylist();
-
-  // If the current display title is empty or says 'Queue cleared' but we have songs, update it!
-  const currentTitleEl = document.getElementById('current-title');
-  const curDisplay = currentTitleEl ? currentTitleEl.innerText.trim() : '';
-  if (videoLinks.length > 0 && (!curDisplay || curDisplay === 'Queue cleared' || curDisplay === 'Loading track title...' || curDisplay === 'Select a track to begin')) {
+  if (changed) {
+    initPlaylist();
+    updatePlaylistUI();
     const activeTrack = videoLinks[currentIndex] || videoLinks[0];
     if (activeTrack && activeTrack.title) {
-      updateDisplayTitle(activeTrack.title, /* broadcast= */ isSuperAdmin);
+      updateDisplayTitle(activeTrack.title);
     }
   }
-
-  updatePlaylistUI();
 }
 
 function createTrackItem(link, index, isActive) {
@@ -1334,9 +649,9 @@ function createTrackItem(link, index, isActive) {
   const isAudioPlaying = disk && disk.classList.contains('playing');
   div.className = `track-card ${isActive ? 'active-playing' : ''}`;
   div.dataset.trackIndex = index;
-  div.draggable = !usingYouTubePlaylist;
+  div.draggable = true;
 
-  const addedBy = link.addedByName || 'Unknown';
+  const addedBy = link.addedByName || 'Station';
   const isHost = addedBy.includes('Super Admin') || addedBy.includes('Host');
   const isPinned = !!link.isPinned;
   const tagHtml = isPinned
@@ -1368,192 +683,597 @@ function createTrackItem(link, index, isActive) {
   `;
 
   div.onclick = () => {
-    if (usingYouTubePlaylist) {
-      if (isSuperAdmin && player && player.playVideoAt) player.playVideoAt(index);
-      sendCommand('play-video', { index });
-    } else {
-      loadVideo(index);
-    }
+    loadVideo(index);
   };
 
   return div;
 }
 
-function togglePinTrack(index) {
-  if (!videoLinks[index]) return;
-  videoLinks[index].isPinned = !videoLinks[index].isPinned;
+// Local helper functions for standalone Guest player
+function toggleLocalPlayback() {
+  if (!player || typeof player.getPlayerState !== 'function') return;
+  const state = player.getPlayerState();
+  const isCurrentlyPlaying = (state === YT.PlayerState.PLAYING);
+  if (isCurrentlyPlaying) {
+    player.pauseVideo();
+    updatePlaybackUIState(false);
+  } else {
+    player.playVideo();
+    updatePlaybackUIState(true);
+  }
+}
+
+function loadLocalVideo(index) {
+  if (index < 0 || index >= videoLinks.length) return;
+  currentIndex = index;
+  const track = videoLinks[index];
+  if (!track) return;
+  lastLoadedVideoId = track.id;
+  if (player && typeof player.loadVideoById === 'function') {
+    player.loadVideoById({ videoId: track.id, startSeconds: 0 });
+  }
+  updatePlaybackUIState(true, track.title, index);
+}
+
+function addLocalTrack(videoId, title) {
+  const wasEmpty = videoLinks.length === 0;
+  videoLinks.push({
+    id: videoId,
+    title: title || 'YouTube Track',
+    addedByName: 'You (Guest)',
+    isPinned: false,
+  });
   initPlaylist();
   updatePlaylistUI();
-  broadcastPlaylist();
-  logActivity(`${videoLinks[index].isPinned ? 'Pinned track' : 'Unpinned track'}: ${videoLinks[index].title || 'Track'}`, 'pin');
+  if (wasEmpty || currentIndex === -1) {
+    loadLocalVideo(0);
+  }
+}
+
+// User Action Handlers (Dispatch Intents for Admins, Local Execution for Guests)
+function toggleMainPlayback() {
+  if (!isAuthorizedUser()) {
+    toggleLocalPlayback();
+    return;
+  }
+  const np = SAS.state?.nowPlaying;
+  // If Super Admin has a local player that is actually paused/stopped, ensure we play!
+  const isActuallyPlaying = isSuperAdmin && player && typeof player.getPlayerState === 'function'
+    ? (player.getPlayerState() === YT.PlayerState.PLAYING || player.getPlayerState() === YT.PlayerState.BUFFERING)
+    : (np && np.isPlaying);
+
+  if (isActuallyPlaying) {
+    SAS.pause();
+  } else {
+    SAS.play();
+  }
+}
+
+function playNext() {
+  if (!isAuthorizedUser()) {
+    if (videoLinks.length === 0) return;
+    const nextIdx = (currentIndex + 1) % videoLinks.length;
+    loadLocalVideo(nextIdx);
+    return;
+  }
+  SAS.next();
+}
+
+function playPrev() {
+  if (!isAuthorizedUser()) {
+    if (videoLinks.length === 0) return;
+    const prevIdx = (currentIndex - 1 + videoLinks.length) % videoLinks.length;
+    loadLocalVideo(prevIdx);
+    return;
+  }
+  SAS.prev();
+}
+
+function loadVideo(index) {
+  if (!isAuthorizedUser()) {
+    loadLocalVideo(index);
+    return;
+  }
+  SAS.goto(index);
+}
+
+function togglePinTrack(index) {
+  if (!isAuthorizedUser()) {
+    if (index < 0 || index >= videoLinks.length) return;
+    videoLinks[index].isPinned = !videoLinks[index].isPinned;
+    initPlaylist();
+    updatePlaylistUI();
+    return;
+  }
+  SAS.togglePin(index);
 }
 
 function removeTrack(index) {
-  if (!videoLinks[index]) return;
-  const removedTitle = videoLinks[index].title || 'Track';
-  const isRemovingCurrent = (index === currentIndex);
-
-  videoLinks.splice(index, 1);
-
-  if (videoLinks.length === 0) {
-    clearAllTracks();
+  if (!isAuthorizedUser()) {
+    if (index < 0 || index >= videoLinks.length) return;
+    videoLinks.splice(index, 1);
+    if (videoLinks.length === 0) {
+      currentIndex = -1;
+      if (player && typeof player.stopVideo === 'function') player.stopVideo();
+      updatePlaybackUIState(false, 'Queue cleared', -1);
+    } else if (index === currentIndex) {
+      const nextIdx = Math.min(index, videoLinks.length - 1);
+      loadLocalVideo(nextIdx);
+    } else if (index < currentIndex) {
+      currentIndex--;
+    }
+    initPlaylist();
+    updatePlaylistUI();
     return;
   }
-
-  if (isRemovingCurrent) {
-    currentIndex = Math.min(currentIndex, videoLinks.length - 1);
-    if (isSuperAdmin && player && player.loadVideoById) {
-      player.loadVideoById(videoLinks[currentIndex].id);
-    }
-    updateDisplayTitle(videoLinks[currentIndex].title);
-  } else if (index < currentIndex) {
-    currentIndex--;
-  }
-
-  initPlaylist();
-  updatePlaylistUI();
-  broadcastPlaylist();
-  logActivity(`Removed: ${removedTitle}`, 'clear');
+  SAS.removeTrack(index);
 }
 
 function clearAllTracks() {
-  if (!isAuthorizedUser()) return;
-  videoLinks = [];
-  currentIndex = 0;
-  usingYouTubePlaylist = false;
-  activePlaylistId = '';
-  activePlaylistTitle = '';
-  if (player && player.stopVideo) player.stopVideo();
-  updateDisplayTitle('Queue cleared');
-  initPlaylist();
-  broadcastPlaylist();
-  sendCommand('clear-queue');
-  logActivity('Cleared master queue', 'clear');
+  if (!isAuthorizedUser()) {
+    if (confirm('Clear your playlist?')) {
+      videoLinks = [];
+      currentIndex = -1;
+      if (player && typeof player.stopVideo === 'function') player.stopVideo();
+      updatePlaybackUIState(false, 'Queue cleared', -1);
+      initPlaylist();
+    }
+    return;
+  }
+  if (confirm('Clear the entire studio queue?')) {
+    SAS.clearQueue();
+  }
 }
 
 function loadDefaultPlaylistAction() {
-  if (!isAuthorizedUser()) return;
-  videoLinks = JSON.parse(JSON.stringify(DEFAULT_TRACKS));
-  currentIndex = 0;
-  usingYouTubePlaylist = false;
-  activePlaylistId = '';
-  activePlaylistTitle = '';
-
-  initPlaylist();
-  updatePlaylistUI();
-  hydrateVideoTitles();
-  broadcastPlaylist();
-
-  const initialTitle = videoLinks[0].title || 'Armaan Malik - Dil Mein Ho Tum';
-  updateDisplayTitle(initialTitle, /* broadcast= */ true);
-
-  if (isSuperAdmin && player && player.loadVideoById) {
-    player.loadVideoById(videoLinks[0].id);
-  } else if (!isSuperAdmin) {
-    sendCommand('play-video', { videoId: videoLinks[0].id, index: 0 });
+  if (!isAuthorizedUser()) {
+    videoLinks = JSON.parse(JSON.stringify(DEFAULT_TRACKS));
+    initPlaylist();
+    updatePlaylistUI();
+    loadLocalVideo(0);
+    return;
   }
-
-  logActivity('Restored default studio playlist', 'add');
+  SAS.loadDefaultQueue();
 }
 
 function clearPlayedTracks() {
-  if (!isAuthorizedUser()) return;
-  if (videoLinks.length === 0 || currentIndex <= 0) return;
-  const removedCount = currentIndex;
-  videoLinks = videoLinks.slice(currentIndex);
-  currentIndex = 0;
-
-  initPlaylist();
-  updatePlaylistUI();
-  broadcastPlaylist();
-  logActivity(`Cleared ${removedCount} played track(s)`, 'clear');
-}
-
-// Queue Tabs Switcher
-document.addEventListener('DOMContentLoaded', () => {
-  const tabAll = document.getElementById('tab-all-queue');
-  const tabPin = document.getElementById('tab-pinned');
-  const tabReq = document.getElementById('tab-requests');
-
-  if (tabAll && tabPin && tabReq) {
-    tabAll.onclick = () => { setActiveTab(tabAll, 'all'); };
-    tabPin.onclick = () => { setActiveTab(tabPin, 'pinned'); };
-    tabReq.onclick = () => { setActiveTab(tabReq, 'requests'); };
-  }
-
-  function setActiveTab(btn, filter) {
-    [tabAll, tabPin, tabReq].forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    activeQueueFilter = filter;
+  if (!isAuthorizedUser()) {
+    if (currentIndex <= 0) return;
+    videoLinks.splice(0, currentIndex);
+    currentIndex = 0;
     initPlaylist();
+    updatePlaylistUI();
+    return;
   }
-});
+  if (currentIndex <= 0) return;
+  // Remove played tracks up to currentIndex
+  for (let i = currentIndex - 1; i >= 0; i--) {
+    SAS.removeTrack(i);
+  }
+}
 
-// Drag & Drop Reordering
-if (playlistContainer) {
-  playlistContainer.addEventListener('dragstart', (event) => {
-    if (usingYouTubePlaylist) return;
-    const row = event.target.closest('.track-card[data-track-index]');
-    if (!row) return;
-    dragFromIndex = Number(row.dataset.trackIndex);
-    row.classList.add('dragging');
-  });
+let isUserAdjustingVolume = false;
+let userAdjustingVolumeTimer = null;
+let volumeBroadcastThrottleTimer = null;
+let volumeBroadcastTrailingTimer = null;
+let pendingBroadcastVolume = null;
+let lastBroadcastedVolume = null;
 
-  playlistContainer.addEventListener('dragover', (event) => {
-    if (usingYouTubePlaylist || dragFromIndex < 0) return;
-    event.preventDefault();
-  });
+function markUserAdjustingVolume() {
+  isUserAdjustingVolume = true;
+  if (userAdjustingVolumeTimer) clearTimeout(userAdjustingVolumeTimer);
+  userAdjustingVolumeTimer = setTimeout(() => {
+    isUserAdjustingVolume = false;
+  }, 400);
+}
 
-  playlistContainer.addEventListener('drop', (event) => {
-    if (usingYouTubePlaylist || dragFromIndex < 0) return;
-    const row = event.target.closest('.track-card[data-track-index]');
-    if (!row) return;
-    event.preventDefault();
-    const dropIndex = Number(row.dataset.trackIndex);
-    if (dragFromIndex !== dropIndex) {
-      const moved = videoLinks[dragFromIndex];
-      videoLinks.splice(dragFromIndex, 1);
-      videoLinks.splice(dropIndex, 0, moved);
-      if (currentIndex === dragFromIndex) currentIndex = dropIndex;
-      initPlaylist();
-      updatePlaylistUI();
-      broadcastPlaylist();
+function broadcastVolumeThrottled(vol) {
+  if (!isAuthorizedUser()) return;
+  pendingBroadcastVolume = vol;
+
+  // Always schedule trailing edge to guarantee the final settled value is dispatched
+  if (volumeBroadcastTrailingTimer) clearTimeout(volumeBroadcastTrailingTimer);
+  volumeBroadcastTrailingTimer = setTimeout(() => {
+    if (pendingBroadcastVolume !== null && pendingBroadcastVolume !== lastBroadcastedVolume) {
+      lastBroadcastedVolume = pendingBroadcastVolume;
+      SAS.setVolume(pendingBroadcastVolume);
     }
-    dragFromIndex = -1;
+    volumeBroadcastTrailingTimer = null;
+  }, 160);
+
+  // If currently throttled, wait for the timer to expire
+  if (volumeBroadcastThrottleTimer) return;
+
+  // Dispatch initial or interval update
+  if (vol !== lastBroadcastedVolume) {
+    lastBroadcastedVolume = vol;
+    SAS.setVolume(vol);
+  }
+
+  volumeBroadcastThrottleTimer = setTimeout(() => {
+    volumeBroadcastThrottleTimer = null;
+    if (pendingBroadcastVolume !== null && pendingBroadcastVolume !== lastBroadcastedVolume) {
+      lastBroadcastedVolume = pendingBroadcastVolume;
+      SAS.setVolume(pendingBroadcastVolume);
+    }
+  }, 120);
+}
+
+function flushBroadcastVolume(vol) {
+  if (!isAuthorizedUser()) return;
+  if (volumeBroadcastTrailingTimer) {
+    clearTimeout(volumeBroadcastTrailingTimer);
+    volumeBroadcastTrailingTimer = null;
+  }
+  if (volumeBroadcastThrottleTimer) {
+    clearTimeout(volumeBroadcastThrottleTimer);
+    volumeBroadcastThrottleTimer = null;
+  }
+  pendingBroadcastVolume = null;
+  lastBroadcastedVolume = vol;
+  SAS.setVolume(vol);
+}
+
+function syncVolume(level, broadcast = true) {
+  const vol = Math.max(0, Math.min(100, parseInt(level, 10) || 0));
+
+  // If this is an incoming server update and user is actively dragging local slider, don't interrupt
+  if (!broadcast && isUserAdjustingVolume) {
+    return;
+  }
+
+  const masterSlider = document.getElementById('master-volume-slider');
+  if (masterSlider) masterSlider.value = vol;
+  const label = document.getElementById('master-volume-label');
+  if (label) label.textContent = vol + '%';
+
+  const remSlider = document.getElementById('remote-volume-slider');
+  if (remSlider) remSlider.value = vol;
+
+  const liveVol = document.getElementById('live-status-volume');
+  if (liveVol) liveVol.textContent = 'Volume: ' + vol + '%';
+
+  if (player && typeof player.setVolume === 'function') {
+    player.setVolume(vol);
+  }
+
+  if (broadcast && isAuthorizedUser()) {
+    markUserAdjustingVolume();
+    broadcastVolumeThrottled(vol);
+  }
+}
+
+function onMasterVolumeInput(slider) {
+  syncVolume(slider.value, true);
+}
+
+function onMasterVolumeChange(slider) {
+  const vol = Math.max(0, Math.min(100, parseInt(slider.value, 10) || 0));
+  flushBroadcastVolume(vol);
+}
+
+// Add YouTube Link or Playlist
+function extractVideoID(url) {
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+  const match = url.match(regExp);
+  return (match && match[2].length === 11) ? match[2] : null;
+}
+
+function addLink() {
+  const input = document.getElementById('link-input');
+  if (!input) return;
+  const raw = input.value.trim();
+  if (!raw) return;
+
+  const videoId = extractVideoID(raw);
+  if (!videoId) {
+    alert("Please enter a valid YouTube video URL.");
+    return;
+  }
+
+  // Fetch title in background then add
+  fetchVideoTitle(videoId).then((title) => {
+    const trackTitle = title || "YouTube Track";
+    if (!isAuthorizedUser()) {
+      addLocalTrack(videoId, trackTitle);
+    } else {
+      SAS.addTrack(videoId, trackTitle);
+    }
+  });
+
+  input.value = '';
+}
+
+function insertTrack(rawInput) {
+  if (!rawInput) return;
+  const urls = rawInput.trim().split(/\s+/).filter(Boolean);
+  urls.forEach((url) => {
+    const videoId = extractVideoID(url);
+    if (videoId) {
+      fetchVideoTitle(videoId).then((title) => {
+        const trackTitle = title || "YouTube Track";
+        if (!isAuthorizedUser()) {
+          addLocalTrack(videoId, trackTitle);
+        } else {
+          SAS.addTrack(videoId, trackTitle);
+        }
+      });
+    }
   });
 }
 
-const linkInput = document.getElementById('link-input');
-if (linkInput) {
-  linkInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') addLink();
-  });
+// YouTube Player Sync Logic (Called on every server state frame)
+function applyNowPlayingToPlayer(np) {
+  if (!np || !np.videoId) return;
+
+  // Update thumbnail for Admin/Guest regardless of player state
+  updateThumbnail(np.videoId);
+
+  // Only Super Admin plays live audio in synchronized room mode.
+  // Admins must NEVER play audio from YouTube (Super Admin is the acoustic transmitter).
+  if (!isSuperAdmin) {
+    if (player && typeof player.pauseVideo === 'function') {
+      try {
+        player.pauseVideo();
+        if (typeof player.mute === 'function') player.mute();
+      } catch (_) { }
+    }
+    return;
+  }
+
+  if (!player || !isPlayerReady) return;
+
+  // Video track change
+  if (np.videoId !== lastLoadedVideoId) {
+    lastLoadedVideoId = np.videoId;
+    const startSec = Math.floor(SAS.projectedPosition());
+    if (np.isPlaying) {
+      player.loadVideoById({
+        videoId: np.videoId,
+        startSeconds: startSec
+      });
+    } else {
+      player.cueVideoById({
+        videoId: np.videoId,
+        startSeconds: startSec
+      });
+    }
+  }
+
+  // Super Admin always unmuted
+  if (typeof player.unMute === 'function') player.unMute();
+
+  // Play / Pause alignment
+  if (typeof player.getPlayerState === 'function') {
+    const currentState = player.getPlayerState();
+    if (np.isPlaying && currentState !== YT.PlayerState.PLAYING && currentState !== YT.PlayerState.BUFFERING) {
+      player.playVideo();
+    } else if (!np.isPlaying && (currentState === YT.PlayerState.PLAYING || currentState === YT.PlayerState.BUFFERING)) {
+      player.pauseVideo();
+    }
+  }
+
+  if (typeof player.setVolume === 'function') {
+    player.setVolume(np.volume);
+  }
 }
 
-initPlaylist();
+// Thumbnail Display for Admin/Guest (no live video, just artwork)
+function updateThumbnail(videoId) {
+  if (!videoId) return;
+  if (videoId === currentThumbnailVideoId) return; // avoid redundant updates
+  currentThumbnailVideoId = videoId;
 
-// =========================================================================
-//  FIREBASE REAL-TIME REMOTE CONTROL SYSTEM
-// =========================================================================
-const SUPER_ADMIN_HASH = '0a72a68aee0043b23198c07dde1e0332fb80eef3fb87a5df882470ce7cd64c2c';
-const DB_ROOT = 'sas-player';
-
-let db = null;
-// Offset (ms) between this device's Date.now() and Firebase's server clock.
-// serverNow() gives a "now" that all devices agree on, regardless of each
-// device's own clock accuracy.
-let serverTimeOffset = 0;
-function serverNow() {
-  return Date.now() + serverTimeOffset;
+  const img = document.getElementById('thumbnail-img');
+  if (img) {
+    // Try maxresdefault first, fallback to hqdefault
+    img.onerror = function () {
+      this.onerror = null;
+      this.src = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+    };
+    img.src = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+  }
 }
-let deviceId = null;
-let deviceStatus = 'unknown';
-let currentUserRole = 'guest';
-let isAdmin = false;
-let isSuperAdmin = false;
-let lastAppliedTimestamp = 0;
-let isCommandFromRemote = false;
-let deviceNamesCache = {};
+
+// Toggle YT Player vs Thumbnail based on role
+function applyRoleBasedVideoDisplay() {
+  const overlay = document.getElementById('thumbnail-overlay');
+  const ytFrame = document.getElementById('yt-iframe');
+  const badge = document.getElementById('thumbnail-role-badge');
+
+  if (isSuperAdmin || currentUserRole === 'guest') {
+    // Super Admin & Guest: show live YT player, hide thumbnail, show timer in deck-top-row
+    if (overlay) overlay.classList.add('hidden');
+    if (ytFrame) ytFrame.style.display = '';
+    setDeckTimerVisible(true);
+    return;
+  }
+
+  // Admin / Pending: show thumbnail, hide YT iframe, hide timer in deck-top-row
+  if (overlay) overlay.classList.remove('hidden');
+  if (ytFrame) ytFrame.style.display = 'none';
+  setDeckTimerVisible(false);
+
+  // Stop any lingering audio from hidden player in Admin/Pending mode
+  if (player) {
+    try {
+      if (typeof player.pauseVideo === 'function') player.pauseVideo();
+      if (typeof player.mute === 'function') player.mute();
+    } catch (_) { }
+  }
+
+  // Update role badge text and styling
+  if (badge) {
+    badge.classList.remove('role-admin', 'role-guest', 'role-pending');
+    const icon = badge.querySelector('i');
+    const label = badge.querySelector('span');
+
+    if (currentUserRole === 'admin') {
+      badge.classList.add('role-admin');
+      if (icon) icon.className = 'fas fa-headset';
+      if (label) label.textContent = 'Admin — Remote Control';
+    } else {
+      badge.classList.add('role-pending');
+      if (icon) icon.className = 'fas fa-hourglass-half';
+      if (label) label.textContent = 'Pending Approval';
+    }
+  }
+
+  // Set initial thumbnail if we have a current track
+  const np = SAS.state?.nowPlaying;
+  if (np && np.videoId) {
+    updateThumbnail(np.videoId);
+  }
+}
+
+// Drift Correction and Duration Sync for client devices
+function onServerTick({ positionSec, durationSec }) {
+  if (!isAuthorizedUser()) return; // Guests have their own local player & timer
+  if (typeof durationSec === 'number' && durationSec > 0) {
+    serverDuration = durationSec;
+  }
+  if (isSuperAdmin || !player || !isPlayerReady || typeof player.getCurrentTime !== 'function') return;
+  const current = player.getCurrentTime();
+  if (Math.abs(current - positionSec) > 1.5) {
+    player.seekTo(positionSec, true);
+  }
+}
+
+// Host publishes position tick twice per second
+setInterval(() => {
+  if (isSuperAdmin && player && isPlayerReady && typeof player.getCurrentTime === 'function' && typeof player.getPlayerState === 'function') {
+    if (player.getPlayerState() === YT.PlayerState.PLAYING) {
+      const cur = player.getCurrentTime() || 0;
+      const dur = (typeof player.getDuration === 'function') ? (player.getDuration() || 0) : 0;
+      SAS.hostTick(cur, dur);
+    }
+  }
+}, 500);
+
+// Single Reactive State Receiver — replaces all Firebase database listeners
+function applyState(s) {
+  if (!s) return;
+
+  // 1. User Identity and Roles — process FIRST so role flags are set before UI updates
+  if (s.you) {
+    deviceId = s.you.deviceId;
+    currentUserRole = s.you.role || 'guest';
+    deviceStatus = s.you.status || (currentUserRole === 'pending' ? 'pending' : (currentUserRole === 'admin' ? 'approved' : 'guest'));
+    isAdmin = (currentUserRole === 'admin' || currentUserRole === 'super_admin');
+    isSuperAdmin = (currentUserRole === 'super_admin');
+
+    // Apply role-based and status body class for CSS-level control lockout
+    document.body.classList.remove('role-super_admin', 'role-admin', 'role-guest', 'role-pending', 'status-revoked');
+    document.body.classList.add(`role-${currentUserRole}`);
+    if (deviceStatus === 'revoked') {
+      document.body.classList.add('status-revoked');
+    }
+
+    updateAccessUI(deviceStatus);
+    updateControlAccessUI();
+    applyRoleBasedVideoDisplay();
+
+    // If role is super_admin or guest and YT player not yet initialized, init now
+    if ((isSuperAdmin || currentUserRole === 'guest') && !player && ytApiReady) {
+      initYouTubePlayer();
+    }
+  }
+
+  // Guests or Pending users: do not overwrite local queue, nowPlaying, fleet, or activity.
+  // Revoked Admins are still studio members — they see the studio (read-only) but cannot control.
+  if (!isStudioMember()) {
+    renderAdminDeviceList([]);
+    renderActivityStream([]);
+    return;
+  }
+
+  // 2. Queue Update (Authorized studio users only)
+  if (Array.isArray(s.queue)) {
+    videoLinks = s.queue;
+    initPlaylist();
+    updatePlaylistUI();
+    hydrateVideoTitles();
+  }
+
+  // 3. Now Playing Update (Authorized studio users only)
+  if (s.nowPlaying) {
+    if (typeof s.nowPlaying.durationSec === 'number' && s.nowPlaying.durationSec > 0) {
+      serverDuration = s.nowPlaying.durationSec;
+    }
+    currentIndex = s.nowPlaying.index;
+    const currentTrack = videoLinks[currentIndex];
+    const title = currentTrack?.title || (currentIndex === -1 ? 'Queue cleared' : 'Select a track to begin');
+
+    updatePlaybackUIState(s.nowPlaying.isPlaying, title, currentIndex);
+    syncVolume(s.nowPlaying.volume, /* broadcast= */ false);
+    applyNowPlayingToPlayer(s.nowPlaying);
+  }
+
+  // 4. Fleet Devices (Authorized studio users only)
+  if (Array.isArray(s.devices)) {
+    renderAdminDeviceList(s.devices);
+  }
+
+  // 5. Authenticated Activity Radar (Authorized studio users only)
+  if (Array.isArray(s.activity)) {
+    renderActivityStream(s.activity);
+  }
+}
+
+function onActionDenied(action) {
+  showConnectionBadge('denied', `Action not permitted: ${action}`);
+}
+
+function onConnectionStatus(status) {
+  const badge = document.getElementById('connection-badge');
+  const text = document.getElementById('connection-status-text');
+  const chipText = document.getElementById('telemetry-status-text');
+
+  if (status === 'connected') {
+    if (chipText) chipText.textContent = 'DO: 12ms • Synced';
+    if (badge && text) {
+      text.textContent = 'Connected to Cloudflare Durable Object';
+      badge.classList.remove('hidden', 'error');
+      setTimeout(() => badge.classList.add('hidden'), 3000);
+    }
+  } else if (status === 'reconnecting') {
+    if (chipText) chipText.textContent = 'DO: Reconnecting...';
+  } else {
+    if (chipText) chipText.textContent = 'DO: Offline';
+    if (badge && text) {
+      text.textContent = 'Connection Offline';
+      badge.classList.remove('hidden');
+      badge.classList.add('error');
+    }
+  }
+}
+
+function showConnectionBadge(type, message = null) {
+  const badge = document.getElementById('connection-badge');
+  const text = document.getElementById('connection-status-text');
+  if (!badge) return;
+
+  badge.classList.remove('hidden', 'error');
+  if (type === 'connected') {
+    if (text) text.textContent = message || 'Connected to Realtime Station';
+  } else if (type === 'denied') {
+    badge.classList.add('error');
+    if (text) text.textContent = message || 'Action Denied';
+  } else {
+    badge.classList.add('error');
+    if (text) text.textContent = message || 'Connection Offline';
+  }
+  setTimeout(() => { badge.classList.add('hidden'); }, 3500);
+}
+
+// Device Fleet & Admin Panel Rendering
+function isStudioMember() {
+  return isSuperAdmin || (isAdmin && currentUserRole === 'admin');
+}
+
+function isAuthorizedUser() {
+  return isSuperAdmin || (isAdmin && currentUserRole === 'admin' && deviceStatus !== 'revoked');
+}
 
 function getBrowserDeviceName() {
   const ua = navigator.userAgent;
@@ -1573,590 +1293,47 @@ function getBrowserDeviceName() {
   return `${browser} - ${os}`;
 }
 
-function getDeviceName(id) {
-  const targetId = id || deviceId;
-
-  if (targetId === deviceId) {
-    const custom = localStorage.getItem('sas_device_name');
-    if (custom) return custom;
-    if (isSuperAdmin) return 'Super Admin';
-    if (isAdmin) return `Admin (${getBrowserDeviceName()})`;
-    return getBrowserDeviceName();
-  }
-
-  if (deviceNamesCache[targetId]) {
-    return deviceNamesCache[targetId];
-  }
-
-  return 'Remote Client';
-}
-
-function getOrCreateDeviceId() {
-  let id = localStorage.getItem('sas_device_id');
-  if (!id) {
-    id = 'dev_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now().toString(36);
-    localStorage.setItem('sas_device_id', id);
-  }
-  return id;
-}
-
-function isAuthorizedUser() {
-  return isSuperAdmin || isAdmin || deviceStatus === 'approved';
-}
-
-function initFirebase() {
-  try {
-    if (!firebase.apps || !firebase.apps.length) {
-      firebase.initializeApp({
-        apiKey: atob('QUl6YVN5RHlvbTdoR2YxM1NLNVhEbjVtVl9oRWZHTnIwX2dqQzFJ'),
-        authDomain: 'sas-premium-player.firebaseapp.com',
-        databaseURL: 'https://sas-premium-player-default-rtdb.firebaseio.com',
-        projectId: 'sas-premium-player',
-        storageBucket: 'sas-premium-player.firebasestorage.app',
-        messagingSenderId: '905309539571',
-        appId: '1:905309539571:web:f62f028776dd80074efb86'
-      });
-    }
-    db = firebase.database();
-    deviceId = getOrCreateDeviceId();
-
-    // Track how far this device's local clock is from Firebase's server clock.
-    // Used everywhere we need "now" to line up with a server-stamped timestamp,
-    // so two different devices' clock drift can't be misread as playback drift.
-    db.ref('.info/serverTimeOffset').on('value', (snap) => {
-      const offset = snap.val();
-      serverTimeOffset = (typeof offset === 'number') ? offset : 0;
-    });
-
-    db.ref(DB_ROOT + '/devices').on('value', (snap) => {
-      const devs = snap.val();
-      if (!devs) return;
-      for (const id in devs) {
-        if (devs[id].name) deviceNamesCache[id] = devs[id].name;
-      }
-      renderAdminDeviceList(devs);
-    });
-
-    const savedRole = localStorage.getItem('sas_user_role');
-    // SECURITY: localStorage is fully attacker-controlled (anyone can set it via
-    // devtools). It must NEVER be trusted to grant real privilege flags on its
-    // own — it's only used here as a cosmetic label so the UI doesn't flash
-    // "guest" for a split second. isAdmin/isSuperAdmin are only ever flipped to
-    // true inside listenToDeviceStatus(), once Firebase's own device record
-    // (the actual source of truth) confirms the role.
-    if (savedRole === 'super_admin' || savedRole === 'admin') {
-      currentUserRole = savedRole;
-    }
-
-    listenToDeviceStatus();
-    listenToCommands();
-    listenToNowPlaying();
-    listenToPlaylist();
-    listenToVolume();
-    listenToLiveEvents();
-    showConnectionBadge('connected');
-
-    // NOTE: activation for returning admins/super-admins now happens inside
-    // listenToDeviceStatus() itself, the moment Firebase's real device record
-    // confirms the role — never eagerly from localStorage (see note above).
-
-    // Version enforcement: check against Firebase required version
-
-    enforceAppVersion();
-
-    // Populate version badge in navbar
-    const versionBadge = document.getElementById('app-version-badge');
-    if (versionBadge) versionBadge.textContent = 'v' + APP_VERSION;
-  } catch (err) {
-    console.error('Firebase error:', err);
-    showConnectionBadge('error');
-  }
-}
-
-function listenToDeviceStatus() {
-  if (!db || !deviceId) return;
-  let roleConfirmedOnce = false;
-  db.ref(DB_ROOT + '/devices/' + deviceId).on('value', (snap) => {
-    const data = snap.val();
-    const newStatus = data ? data.status : 'unknown';
-    const newRole = data ? (data.role || 'guest') : 'guest';
-
-    // SECURITY: Firebase's own record for this device is the ONLY source of
-    // truth for privilege flags. This branch both promotes AND demotes —
-    // previously it only ever promoted, which meant a role flipped on via a
-    // tampered localStorage value at page load was never corrected back down.
-    if (newRole === 'super_admin' || newRole === 'admin') {
-      const wasElevated = isAdmin || isSuperAdmin;
-      isAdmin = true;
-      isSuperAdmin = (newRole === 'super_admin');
-      currentUserRole = newRole;
-      localStorage.setItem('sas_user_role', newRole);
-      if (!wasElevated || !roleConfirmedOnce) {
-        // First confirmation this session (e.g. a returning admin reloading
-        // the page) — run full activation (unmute policy, time-sync, presence).
-        activateRoleMode(newRole, /* skipBroadcast= */ true);
-        setTimeout(syncInitialState, 800);
-      }
-    } else {
-      if (isAdmin || isSuperAdmin) {
-        console.warn('[SAS Security] Firebase device record no longer grants elevated role — revoking locally');
-      }
-      isAdmin = false;
-      isSuperAdmin = false;
-      currentUserRole = 'guest';
-      localStorage.removeItem('sas_user_role');
-    }
-    roleConfirmedOnce = true;
-    markRoleConfirmed();
-
-    deviceStatus = newStatus;
-    if (newStatus === 'approved' || isAdmin || isSuperAdmin) {
-      deviceStatus = 'approved';
-      syncInitialState();
-    }
-    updateAccessUI(deviceStatus);
-    updateControlAccessUI();
-  });
-}
-
-function listenToCommands() {
-  if (!db) return;
-  db.ref(DB_ROOT + '/state').on('value', (snap) => {
-    const cmd = snap.val();
-    if (!cmd || !cmd.command || !cmd.timestamp) return;
-    if (cmd.timestamp <= lastAppliedTimestamp) return;
-    if (cmd.issuedBy === deviceId) return;
-
-    if (!isSuperAdmin) return;
-
-    lastAppliedTimestamp = cmd.timestamp;
-    isCommandFromRemote = true;
-    pendingCommandIssuer = cmd.issuedBy;
-    applyRemoteCommand(cmd);
-    setTimeout(() => { isCommandFromRemote = false; }, 1000);
-  });
-}
-
-function listenToNowPlaying() {
-  if (!db) return;
-  db.ref(DB_ROOT + '/nowPlaying').on('value', (snap) => {
-    const data = snap.val();
-    if (!data) return;
-    lastNowPlayingData = data;
-    // First real snapshot has arrived — safe to build the player now if it's
-    // been waiting on this (see tryInitPlayer()).
-    if (!nowPlayingSnapshotArrived) {
-      nowPlayingSnapshotArrived = true;
-      tryInitPlayer();
-    }
-    // Strict authorization guard: never leak or sync now-playing data to unauthorized guests
-    if (!isAuthorizedUser()) return;
-    applyNowPlayingUI(data);
-  });
-}
-
-function applyNowPlayingUI(data) {
-  if (!data) return;
-  const isPlaying = !!data.isPlaying;
-  let title = data.title;
-
-  if (videoLinks.length > 0) {
-    if (!title || title === 'Queue cleared' || title === 'Select a track to begin') {
-      const activeTrack = videoLinks[data.trackIndex || 0] || videoLinks[0];
-      title = (activeTrack && activeTrack.title) ? activeTrack.title : (activeTrack ? 'Loading track title...' : 'Select a track to begin');
-    }
-  } else {
-    title = 'Queue cleared';
-  }
-
-  updatePlaybackUIState(isPlaying, title, data.trackIndex);
-
-  // Non-super-admin devices (Admin + approved guests) no longer run a real
-  // player to keep in sync — see tryInitPlayer(). Just keep the thumbnail
-  // pointed at whatever's actually playing.
-  if (!isSuperAdmin) {
-    const targetVideoId = data.videoId || (videoLinks[data.trackIndex] ? videoLinks[data.trackIndex].id : null);
-    if (targetVideoId) {
-      updateThumbnailForVideo(targetVideoId);
-    }
-  }
-}
-
-function listenToVolume() {
-  if (!db) return;
-  db.ref(DB_ROOT + '/volume').on('value', (snap) => {
-    const data = snap.val();
-    if (!data || typeof data.level !== 'number') return;
-    lastVolumeData = data;
-    // Strict authorization guard: never sync volume from host to unauthorized guests
-    if (!isAuthorizedUser()) return;
-    if (data.updatedBy === deviceId) return;
-    applyVolumeUI(data);
-  });
-}
-
-function applyVolumeUI(data) {
-  syncVolume(data.level, false);
-}
-
-function applyRemoteCommand(cmd) {
-  switch (cmd.command) {
-    case 'play':
-      if (isSuperAdmin && player && player.playVideo) player.playVideo();
-      break;
-    case 'pause':
-      if (isSuperAdmin && player && player.pauseVideo) player.pauseVideo();
-      break;
-    case 'toggle-play-pause':
-      toggleMainPlayback();
-      break;
-    case 'next':
-      playNext();
-      break;
-    case 'prev':
-      playPrev();
-      break;
-    case 'play-video':
-      if (cmd.data && cmd.data.videoId) {
-        // Update currentIndex so nowPlaying broadcast has the correct track
-        if (typeof cmd.data.index === 'number') {
-          currentIndex = cmd.data.index;
-        }
-        if (isSuperAdmin && player && player.loadVideoById) {
-          player.loadVideoById(cmd.data.videoId);
-        }
-        // Update display title from playlist data
-        if (videoLinks[currentIndex]) {
-          updateDisplayTitle(videoLinks[currentIndex].title || 'Loading track title...');
-        }
-        updatePlaylistUI();
-      }
-      break;
-    case 'volume':
-      if (cmd.data && typeof cmd.data.level === 'number') {
-        syncVolume(cmd.data.level, false);
-      }
-      break;
-    case 'clear-queue':
-      if (isSuperAdmin && player && player.stopVideo) player.stopVideo();
-      videoLinks = [];
-      currentIndex = 0;
-      updateDisplayTitle('Queue cleared');
-      initPlaylist();
-      break;
-  }
-}
-
-function sendCommand(command, data) {
-  if (!db || !deviceId) return;
-  if (isCommandFromRemote) return;
-  if (deviceStatus !== 'approved' && !isAdmin) return;
-
-  if (command === 'volume' && data && typeof data.level === 'number') {
-    db.ref(DB_ROOT + '/volume').set({
-      level: data.level,
-      updatedAt: Date.now(),
-      updatedBy: deviceId
-    });
-    return;
-  }
-
-  db.ref(DB_ROOT + '/state').set({
-    command,
-    data: data || null,
-    timestamp: Date.now(),
-    issuedBy: deviceId
-  });
-}
-
-function broadcastNowPlaying(title, isPlaying) {
-  if (!db || !deviceId) return;
-  if (!isSuperAdmin) return; // Strict: Only Super Admin host can broadcast now-playing state
-
-  let curVideoId = '';
-  let curTime = 0;
-  let curDuration = 0;
-  if (player) {
-    if (typeof player.getVideoData === 'function') {
-      const vd = player.getVideoData();
-      if (vd && vd.video_id) curVideoId = vd.video_id;
-    }
-    if (typeof player.getCurrentTime === 'function') {
-      curTime = player.getCurrentTime() || 0;
-    }
-    if (typeof player.getDuration === 'function') {
-      curDuration = player.getDuration() || 0;
-    }
-  }
-  if (!curVideoId && videoLinks[currentIndex]) {
-    curVideoId = videoLinks[currentIndex].id;
-  }
-
-  // Ensure currentIndex matches the real playing video in videoLinks
-  if (curVideoId) {
-    const matchedIdx = videoLinks.findIndex((v) => v.id === curVideoId);
-    if (matchedIdx !== -1) {
-      currentIndex = matchedIdx;
-    }
-  }
-
-  const broadcastTitle = title || (videoLinks[currentIndex] ? videoLinks[currentIndex].title : '') || 'SAS Player';
-
-  db.ref(DB_ROOT + '/nowPlaying').set({
-    title: broadcastTitle,
-    isPlaying: !!isPlaying,
-    trackIndex: currentIndex,
-    videoId: curVideoId,
-    currentTime: Math.round(curTime * 10) / 10,
-    duration: Math.round(curDuration * 10) / 10,
-    // Server-resolved timestamp: Firebase replaces this with the RTDB server's
-    // own clock value at write time, so every device measures "elapsed since
-    // broadcast" against the same clock instead of the Super Admin's local one.
-    timestamp: firebase.database.ServerValue.TIMESTAMP,
-    updatedAt: Date.now(),
-    updatedBy: lastCommandIssuer || deviceId
-  });
-}
-
-function broadcastPlaylist() {
-  if (!db || !deviceId) return;
-  if (isCommandFromRemote) return;
-  if (!isAuthorizedUser()) return;
-  const tracks = videoLinks.map((v) => ({ id: v.id, title: v.title, addedByName: v.addedByName || '' }));
-  db.ref(DB_ROOT + '/playlist').set({
-    tracks,
-    currentIndex,
-    updatedAt: Date.now(),
-    updatedBy: deviceId
-  });
-}
-
-function listenToPlaylist() {
-  if (!db) return;
-  db.ref(DB_ROOT + '/playlist').on('value', (snap) => {
-    const data = snap.val();
-    if (!data) return;
-    // Strict authorization guard: never sync playlist to unauthorized guests
-    if (!isAuthorizedUser()) return;
-    if (data.updatedBy === deviceId) return;
-
-    const remoteTracks = data.tracks || (data.ids ? data.ids.map(id => ({ id, addedByName: '' })) : []);
-    const remoteIds = remoteTracks.map(t => t.id);
-    const localIds = videoLinks.map(v => v.id);
-
-    if (JSON.stringify(remoteIds) === JSON.stringify(localIds)) return;
-
-    isCommandFromRemote = true;
-    loadCustomQueueSilent(remoteTracks, currentIndex);
-    setTimeout(() => { isCommandFromRemote = false; }, 200);
-  });
-}
-
-function syncInitialState() {
-  if (!db || !isAuthorizedUser()) return;
-
-  // 1. Sync Playlist from Firebase
-  db.ref(DB_ROOT + '/playlist').once('value', (snap) => {
-    const data = snap.val();
-    if (!data) return;
-    const remoteTracks = data.tracks || (data.ids ? data.ids.map(id => ({ id, addedByName: '' })) : null);
-    if (!Array.isArray(remoteTracks) || remoteTracks.length === 0) return;
-    if (!isAuthorizedUser()) return;
-
-    const remoteIds = remoteTracks.map(t => t.id);
-    const localIds = videoLinks.map(v => v.id);
-    if (JSON.stringify(remoteIds) !== JSON.stringify(localIds)) {
-      isCommandFromRemote = true;
-      loadCustomQueueSilent(remoteTracks, currentIndex);
-      setTimeout(() => { isCommandFromRemote = false; }, 200);
-    }
-  });
-
-  // 2. Sync Now Playing (Title, Play State, Track Index) for ALL Authorized Devices
-  db.ref(DB_ROOT + '/nowPlaying').once('value', (snap) => {
-    const data = snap.val();
-    if (!data) return;
-    lastNowPlayingData = data;
-    applyNowPlayingUI(data);
-
-    if (isSuperAdmin && data.videoId) {
-      const currentVideoId = videoLinks[currentIndex] ? videoLinks[currentIndex].id : null;
-      if (data.videoId !== currentVideoId && player && player.loadVideoById) {
-        player.loadVideoById(data.videoId);
-      }
-    }
-  });
-
-  // 3. Sync Volume for ALL Authorized Devices
-  db.ref(DB_ROOT + '/volume').once('value', (snap) => {
-    const data = snap.val();
-    if (data && typeof data.level === 'number') {
-      lastVolumeData = data;
-      applyVolumeUI(data);
-    }
-  });
-}
-
-function updateRemotePlayPauseIcon(isPlaying) {
-  const btn = document.getElementById('remote-play-pause');
-  if (btn) {
-    const icon = btn.querySelector('i');
-    if (icon) icon.className = isPlaying ? 'fas fa-pause' : 'fas fa-play';
-  }
-}
-
-function showConnectionBadge(status) {
-  const badge = document.getElementById('connection-badge');
-  const text = document.getElementById('connection-status-text');
-  const chipText = document.getElementById('telemetry-status-text');
-  if (!badge) return;
-
-  badge.classList.remove('hidden', 'error');
-  if (status === 'connected') {
-    if (text) text.textContent = 'Connected to Host Realtime Bus';
-    if (chipText) chipText.textContent = 'RTDB: 11ms • Synced';
-  } else {
-    badge.classList.add('error');
-    if (text) text.textContent = 'Connection Offline';
-    if (chipText) chipText.textContent = 'RTDB: Offline';
-  }
-  setTimeout(() => { badge.classList.add('hidden'); }, 3000);
-}
-
-function updateAccessUI(status) {
-  const btn = document.getElementById('request-access-btn');
-  const panel = document.getElementById('remote-control-panel');
-  updateControlAccessUI();
-  if (!btn) return;
-
-  btn.classList.remove('pending', 'revoked');
-  if (status === 'approved' || isAdmin || isSuperAdmin) {
-    btn.querySelector('span').textContent = 'Remote';
-    if (panel) panel.classList.remove('hidden');
-  } else if (status === 'pending') {
-    btn.classList.add('pending');
-    btn.querySelector('span').textContent = 'Pending';
-    if (panel) panel.classList.add('hidden');
-  } else if (status === 'revoked') {
-    btn.classList.add('revoked');
-    btn.querySelector('span').textContent = 'Revoked';
-    if (panel) panel.classList.add('hidden');
-  } else {
-    btn.querySelector('span').textContent = 'Remote';
-    if (panel) panel.classList.add('hidden');
-  }
-}
-
-// Locks the real playback/queue controls in the DOM for anyone who isn't an
-// authorized device (approved guest, admin, or super admin). This is a UX
-// safety net, not the actual security boundary — the real enforcement is the
-// isAuthorizedUser()/isAdmin gates already in sendCommand(), broadcastPlaylist(),
-// broadcastNowPlaying(), and the queue-management functions. Locking the UI
-// just stops unauthorized visitors from clicking things that will silently
-// no-op, which was confusing.
-function updateControlAccessUI() {
-  const authorized = isAuthorizedUser();
-  const selectors = [
-    '#link-input', '#remote-link-input',
-    '#master-volume-slider', '#remote-volume-slider',
-    '.transport-btn', '.remote-btn',
-    '.queue-actions button',
-    '#play-pause-btn', '#remote-add-btn'
-  ];
-  document.querySelectorAll(selectors.join(',')).forEach((el) => {
-    el.disabled = !authorized;
-    el.style.opacity = authorized ? '' : '0.4';
-    el.style.cursor = authorized ? '' : 'not-allowed';
-  });
-  const disk = document.getElementById('spinning-disk');
-  if (disk) disk.style.cursor = authorized ? 'pointer' : 'not-allowed';
-}
-
-function activateRoleMode(role, skipBroadcast = false) {
-  currentUserRole = role;
-  isAdmin = (role === 'admin' || role === 'super_admin');
-  isSuperAdmin = (role === 'super_admin');
-  localStorage.setItem('sas_user_role', role);
-
-  // Audio output policy: super admin hosts audio output; non-super-admin remains muted
-  if (player) {
-    if (isSuperAdmin && typeof player.unMute === 'function') {
-      player.unMute();
-    } else if (!isSuperAdmin && typeof player.mute === 'function') {
-      player.mute();
-    }
-  }
-
-  // Time-sync service: super admin broadcasts high-precision timestamps
-  if (isSuperAdmin) {
-    startTimeSync();
-  } else if (timeSyncInterval) {
-    clearInterval(timeSyncInterval);
-    timeSyncInterval = null;
-  }
-
-  const defaultName = isSuperAdmin ? 'Super Admin' : 'Admin';
-  const deviceName = localStorage.getItem('sas_device_name') || defaultName;
-  if (db && deviceId) {
-    db.ref(DB_ROOT + '/devices/' + deviceId).update({
-      name: deviceName,
-      status: 'approved',
-      role: role,
-      requestedAt: Date.now(),
-      lastActive: Date.now()
-    });
-  }
-  listenToAllDevices();
-  deviceStatus = 'approved';
-  updateAccessUI('approved');
-
-  if (!skipBroadcast) {
-    setTimeout(() => {
-      broadcastPlaylist();
-      const titleEl = document.getElementById('current-title');
-      broadcastNowPlaying(titleEl ? titleEl.innerText : '', disk && disk.classList.contains('playing'));
-    }, 300);
-  }
-}
-
-function listenToAllDevices() {
-  if (!db) return;
-  db.ref(DB_ROOT + '/devices').on('value', (snap) => {
-    const devices = snap.val() || {};
-    renderAdminDeviceList(devices);
-  });
+function getDeviceName() {
+  return localStorage.getItem('sas_device_name') || (isSuperAdmin ? 'Super Admin' : getBrowserDeviceName());
 }
 
 function renderAdminDeviceList(devices) {
   const listEl = document.getElementById('admin-device-list');
   const fleetEl = document.getElementById('fleet-device-list');
   const fleetCountEl = document.getElementById('fleet-count-badge');
-  const entries = Object.entries(devices || {});
 
-  // Unauthorized guests only see their isolated local player in the fleet deck
+  // Guests only see their own local standalone player node
   if (!isAuthorizedUser()) {
     if (fleetCountEl) fleetCountEl.textContent = '1';
     if (fleetEl) {
       fleetEl.innerHTML = `
         <div class="device-node-card">
           <div class="device-node-top">
-            <div class="device-node-identity">
-              <i class="fas fa-headphones"></i>
-              <span>Local Player</span>
-              <span style="font-size:10px;color:var(--text-muted);">(You)</span>
-            </div>
-            <span class="device-role-pill guest">GUEST</span>
+            <div class="device-node-identity"><i class="fas fa-headphones" style="color: var(--accent-cyan);"></i> <span>Local Player</span> <span style="font-size:10px;color:var(--text-muted);">(You)</span></div>
+            <span class="device-role-pill guest">STANDALONE</span>
           </div>
-          <div class="device-node-stats-row">
-            <span>Standalone Player</span>
-            <span style="color: var(--text-dim);">● Local Only</span>
-          </div>
+          <div class="device-node-stats-row"><span>Standalone Player</span><span style="color: var(--accent-green);">● Local Only</span></div>
         </div>`;
+    }
+    if (listEl) {
+      listEl.innerHTML = '<div class="admin-no-devices" style="text-align:center; padding:20px; color:var(--text-muted);">Admin access required to view fleet registry.</div>';
     }
     return;
   }
 
+  const entries = devices || [];
   if (fleetCountEl) fleetCountEl.textContent = entries.length || '1';
+
+  // Update Notification Dot and Pending Badge Count for Super Admin
+  const pendingEntries = entries.filter((d) => (d.role === 'pending' || d.status === 'pending') && d.deviceId !== deviceId);
+  const pendingCount = pendingEntries.length;
+  const notifDot = document.querySelector('.admin-panel-btn .notif-dot');
+  if (notifDot) notifDot.classList.toggle('visible', isSuperAdmin && pendingCount > 0);
+  const pendingBadge = document.getElementById('pending-badge');
+  if (pendingBadge) {
+    pendingBadge.textContent = pendingCount;
+    pendingBadge.classList.toggle('hidden', !isSuperAdmin || pendingCount === 0);
+  }
 
   // Render Right-Pane Fleet Monitor
   if (fleetEl) {
@@ -2170,24 +1347,36 @@ function renderAdminDeviceList(devices) {
           <div class="device-node-stats-row"><span>Audio Transmitter</span><span style="color: var(--accent-green);">● Active</span></div>
         </div>`;
     } else {
-      fleetEl.innerHTML = entries.map(([id, device]) => {
-        const isSelf = id === deviceId;
-        const role = device.role || 'guest';
+      fleetEl.innerHTML = entries.map((dev) => {
+        const isSelf = dev.deviceId === deviceId;
+        const role = dev.role || 'guest';
+        const status = dev.status || (role === 'pending' ? 'pending' : (role === 'admin' ? 'approved' : 'guest'));
         const isHost = (role === 'super_admin');
-        const icon = isHost ? 'fa-desktop' : (device.name && device.name.toLowerCase().includes('phone') ? 'fa-mobile-alt' : 'fa-laptop');
+        const icon = isHost ? 'fa-desktop' : (dev.name && dev.name.toLowerCase().includes('phone') ? 'fa-mobile-alt' : 'fa-laptop');
+
+        let statusDot = '● Active';
+        let statusColor = 'var(--accent-green)';
+        if (role === 'pending' || status === 'pending') {
+          statusDot = '● Pending Request';
+          statusColor = '#f39c12';
+        } else if (role === 'admin' && status === 'revoked') {
+          statusDot = '● Controls Revoked';
+          statusColor = '#e74c3c';
+        }
+
         return `
-          <div class="device-node-card ${isHost ? 'host-transmitter' : ''}">
+          <div class="device-node-card ${isHost ? 'host-transmitter' : ''} ${status === 'revoked' ? 'revoked' : ''}">
             <div class="device-node-top">
               <div class="device-node-identity">
                 <i class="fas ${icon}" style="${isHost ? 'color: var(--accent-gold);' : ''}"></i>
-                <span>${escapeHtml(device.name || 'Device')}</span>
+                <span>${escapeHtml(dev.name || 'Device')}</span>
                 ${isSelf ? '<span style="font-size:10px;color:var(--text-muted);">(You)</span>' : ''}
               </div>
               <span class="device-role-pill ${role}">${escapeHtml(role.replace('_', ' '))}</span>
             </div>
             <div class="device-node-stats-row">
               <span>${isHost ? 'Host Master' : 'Client Node'}</span>
-              <span style="color: ${device.status === 'approved' ? 'var(--accent-green)' : (device.status === 'pending' ? '#f39c12' : '#e74c3c')};">● ${escapeHtml(device.status || 'Active')}</span>
+              <span style="color: ${statusColor};">${statusDot}</span>
             </div>
           </div>`;
       }).join('');
@@ -2197,114 +1386,267 @@ function renderAdminDeviceList(devices) {
   // Render Modal Device List
   if (listEl) {
     if (entries.length === 0) {
-      listEl.innerHTML = '<div class="admin-no-devices" style="text-align:center; padding:20px; color:var(--text-muted);">No devices yet. Share the site URL to get started.</div>';
+      listEl.innerHTML = '<div class="admin-no-devices" style="text-align:center; padding:20px; color:var(--text-muted);">No devices connected yet.</div>';
       return;
     }
 
-    listEl.innerHTML = entries.map(([id, device]) => {
-      const isSelf = id === deviceId;
-      const targetRole = device.role || 'guest';
+    listEl.innerHTML = entries.map((dev) => {
+      const isSelf = dev.deviceId === deviceId;
+      const targetRole = dev.role || 'guest';
+      const targetStatus = dev.status || (targetRole === 'pending' ? 'pending' : (targetRole === 'admin' ? 'approved' : 'guest'));
       const isTargetSuperAdmin = targetRole === 'super_admin';
       const isTargetAdmin = targetRole === 'admin';
+      const isPending = (targetRole === 'pending' || targetStatus === 'pending');
+      const isRevoked = (isTargetAdmin && targetStatus === 'revoked');
 
       let actionsHtml = '';
-      if (!isSelf) {
-        if (isSuperAdmin) {
-          actionsHtml += '<div class="device-actions">';
-          if (!isTargetSuperAdmin) {
-            if (isTargetAdmin) {
-              actionsHtml += `<button class="demote-btn" onclick="setDeviceRole('${escapeHtml(id)}', 'guest')"><i class="fas fa-user"></i> Demote</button>`;
-            } else {
-              actionsHtml += `<button class="promote-btn" onclick="setDeviceRole('${escapeHtml(id)}', 'admin')"><i class="fas fa-user-shield"></i> Make Admin</button>`;
-            }
-            if (device.status === 'approved') {
-              actionsHtml += `<button class="revoke-btn" onclick="revokeDevice('${escapeHtml(id)}')"><i class="fas fa-ban"></i> Revoke</button>`;
-            } else {
-              actionsHtml += `<button class="approve-btn" onclick="approveDevice('${escapeHtml(id)}')"><i class="fas fa-check"></i> Approve</button>`;
-            }
+      if (!isSelf && isSuperAdmin && !isTargetSuperAdmin) {
+        actionsHtml += '<div class="device-actions">';
+        if (isPending) {
+          // 1. Pending Admin Access Request: Super Admin sees Approve (grants them Admin role already!)
+          actionsHtml += `<button class="approve-btn" onclick="SAS.setDeviceRole('${escapeHtml(dev.deviceId)}', 'admin', 'approved')"><i class="fas fa-check"></i> Approve</button>`;
+        } else if (isTargetAdmin) {
+          // 2. User has Admin role:
+          if (isRevoked) {
+            // Revoked Admin: Super Admin can restore controls (Grant = give controls back)
+            actionsHtml += `<button class="approve-btn" onclick="SAS.setDeviceRole('${escapeHtml(dev.deviceId)}', 'admin', 'approved')"><i class="fas fa-check-circle"></i> Grant</button>`;
+          } else {
+            // Active Admin: Super Admin can Revoke (keep Admin role, take back controls)
+            actionsHtml += `<button class="revoke-btn" onclick="SAS.setDeviceRole('${escapeHtml(dev.deviceId)}', 'admin', 'revoked')"><i class="fas fa-ban"></i> Revoke</button>`;
           }
-          actionsHtml += `<button class="revoke-btn delete-btn" onclick="deleteDevice('${escapeHtml(id)}')"><i class="fas fa-trash"></i></button>`;
-          actionsHtml += '</div>';
+          // Demote removes that user from Admin role (reverts to guest)
+          actionsHtml += `<button class="demote-btn" onclick="SAS.setDeviceRole('${escapeHtml(dev.deviceId)}', 'guest', 'guest')"><i class="fas fa-user-minus"></i> Demote</button>`;
+        } else {
+          // 3. Guest device: Super Admin can promote directly to Admin
+          actionsHtml += `<button class="promote-btn" onclick="SAS.setDeviceRole('${escapeHtml(dev.deviceId)}', 'admin', 'approved')"><i class="fas fa-user-shield"></i> Make Admin</button>`;
         }
+        actionsHtml += `<button class="revoke-btn delete-btn" title="Remove Device" onclick="SAS.removeDevice('${escapeHtml(dev.deviceId)}')"><i class="fas fa-trash"></i></button>`;
+        actionsHtml += '</div>';
       }
 
+      const badgeClass = isPending ? 'pending' : (isRevoked ? 'revoked' : 'approved');
+      const badgeText = isPending ? 'pending' : (isRevoked ? 'revoked' : (isTargetAdmin ? 'approved' : 'active'));
+
       return `
-        <div class="device-card ${escapeHtml(device.status || '')}">
+        <div class="device-card ${escapeHtml(targetRole)} ${isRevoked ? 'revoked' : ''}">
           <div class="device-info">
             <div class="device-name">
-              ${escapeHtml(device.name || 'Unknown Device')} ${isSelf ? '<span style="font-size:10px;color:var(--text-muted);margin-left:6px;">(You)</span>' : ''}
+              ${escapeHtml(dev.name || 'Unknown Device')} ${isSelf ? '<span style="font-size:10px;color:var(--text-muted);margin-left:6px;">(You)</span>' : ''}
               <span class="device-role-pill ${targetRole}" style="margin-left:8px;">${escapeHtml(targetRole.replace('_', ' '))}</span>
             </div>
             <div class="device-meta">
-              <span class="device-status-badge ${escapeHtml(device.status || '')}">${escapeHtml(device.status || '')}</span>
-              <span class="device-id-text">${escapeHtml(id.substring(0, 16))}...</span>
+              <span class="device-status-badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+              <span class="device-id-text">${escapeHtml(dev.deviceId ? dev.deviceId.substring(0, 16) : '')}...</span>
             </div>
           </div>
           ${actionsHtml}
         </div>`;
     }).join('');
-
-    const clearBtn = document.getElementById('clear-all-devices-btn');
-    if (clearBtn) {
-      const hasOthers = entries.some(([id]) => id !== deviceId);
-      clearBtn.classList.toggle('hidden', !isSuperAdmin || !hasOthers);
-    }
   }
 }
 
-function setDeviceRole(id, role) {
-  if (!isSuperAdmin || !db) return;
-  db.ref(DB_ROOT + '/devices/' + id).update({ role, status: 'approved' });
-}
+function updateAccessUI(status) {
+  const btn = document.getElementById('request-access-btn');
+  const panel = document.getElementById('remote-control-panel');
+  const stickyBtn = document.getElementById('sticky-remote-btn');
+  if (!btn) return;
 
-function approveDevice(id) {
-  if ((!isAdmin && !isSuperAdmin) || !db) return;
-  db.ref(DB_ROOT + '/devices/' + id + '/status').set('approved');
-}
+  btn.classList.remove('pending', 'revoked');
+  const isAuth = (status === 'approved' || isAdmin || isSuperAdmin) && status !== 'revoked';
 
-function revokeDevice(id) {
-  if ((!isAdmin && !isSuperAdmin) || !db) return;
-  db.ref(DB_ROOT + '/devices/' + id + '/status').set('revoked');
-}
-
-function deleteDevice(id) {
-  if ((!isAdmin && !isSuperAdmin) || !db) return;
-  if (confirm('Remove this device entry from the list?')) {
-    db.ref(DB_ROOT + '/devices/' + id).remove();
+  if (status === 'revoked') {
+    btn.classList.add('revoked');
+    btn.querySelector('span').textContent = 'Revoked';
+    if (panel) panel.classList.add('hidden');
+    if (stickyBtn) stickyBtn.classList.add('hidden');
+  } else if (isAuth) {
+    btn.querySelector('span').textContent = 'Remote';
+    // Do not force-open remote panel on state updates! Respect current minimized/open state.
+    if (!remotePanelMinimized && panel && !panel.classList.contains('hidden')) {
+      panel.classList.remove('hidden');
+      if (stickyBtn) stickyBtn.classList.add('hidden');
+    } else {
+      if (panel) panel.classList.add('hidden');
+      if (stickyBtn) stickyBtn.classList.remove('hidden');
+    }
+  } else if (status === 'pending') {
+    btn.classList.add('pending');
+    btn.querySelector('span').textContent = 'Pending';
+    if (panel) panel.classList.add('hidden');
+    if (stickyBtn) stickyBtn.classList.add('hidden');
+  } else {
+    // Standalone Guest: remote panel and sticky button are strictly hidden
+    btn.querySelector('span').textContent = 'Remote';
+    if (panel) panel.classList.add('hidden');
+    if (stickyBtn) stickyBtn.classList.add('hidden');
   }
 }
 
-function clearAllOtherDevices() {
-  if (!isSuperAdmin || !db) return;
-  if (!confirm('This will remove ALL other device entries except yours. Continue?')) return;
-  db.ref(DB_ROOT + '/devices').once('value', (snap) => {
-    const devices = snap.val();
-    if (!devices) return;
-    const updates = {};
-    Object.keys(devices).forEach((id) => {
-      if (id !== deviceId) updates[id] = null;
-    });
-    if (Object.keys(updates).length > 0) {
-      db.ref(DB_ROOT + '/devices').update(updates);
-    }
+function applyRoleHeaderUI() {
+  const isSuper = (currentUserRole === 'super_admin');
+  const adminBtn = document.getElementById('admin-panel-btn');
+  const workerBtn = document.getElementById('worker-settings-btn');
+  const fleetControls = document.querySelector('.fleet-card .pane-controls');
+
+  if (adminBtn) adminBtn.style.display = isSuper ? 'inline-flex' : 'none';
+  if (workerBtn) workerBtn.style.display = isSuper ? 'inline-flex' : 'none';
+  if (fleetControls) fleetControls.style.display = isSuper ? 'flex' : 'none';
+
+  const chip = document.getElementById('system-status-chip');
+  if (chip) {
+    chip.style.cursor = isSuper ? 'pointer' : 'default';
+  }
+}
+
+function updateControlAccessUI() {
+  applyRoleHeaderUI();
+  const isPending = (currentUserRole === 'pending');
+  const isRevoked = (deviceStatus === 'revoked');
+  // Standalone Guest and Admins have playback & queue interactivity!
+  // Pending access requests or revoked status lock controls.
+  const allowTransport = !isPending && !isRevoked;
+  const allowQueue = !isPending && !isRevoked;
+  const allowAdd = !isPending && !isRevoked;
+
+  // Local transport controls (Play/Pause, Slider, Track Cards)
+  const localTransportSelectors = [
+    '#master-volume-slider',
+    '.transport-btn',
+    '#play-pause-btn'
+  ];
+  document.querySelectorAll(localTransportSelectors.join(',')).forEach((el) => {
+    el.disabled = !allowTransport;
+    el.style.opacity = allowTransport ? '' : '0.35';
+    el.style.cursor = allowTransport ? '' : 'not-allowed';
+  });
+
+  // Spinning disk click
+  const spinningDisk = document.getElementById('spinning-disk');
+  if (spinningDisk) spinningDisk.style.cursor = allowTransport ? 'pointer' : 'not-allowed';
+
+  // Remote floating buttons: only for authorized admin/super_admin
+  const remoteSelectors = [
+    '#remote-volume-slider',
+    '.remote-btn',
+    '#remote-play-pause',
+    '#remote-prev',
+    '#remote-next'
+  ];
+  const canRemote = isAuthorizedUser();
+  document.querySelectorAll(remoteSelectors.join(',')).forEach((el) => {
+    el.disabled = !canRemote;
+    el.style.opacity = canRemote ? '' : '0.35';
+    el.style.cursor = canRemote ? '' : 'not-allowed';
+  });
+
+  // Queue management: clear, restore, sweep
+  const queueSelectors = ['.queue-actions button'];
+  document.querySelectorAll(queueSelectors.join(',')).forEach((el) => {
+    el.disabled = !allowQueue;
+    el.style.opacity = allowQueue ? '' : '0.35';
+    el.style.cursor = allowQueue ? '' : 'not-allowed';
+  });
+
+  // Add track inputs
+  const addSelectors = ['#link-input', '#remote-link-input', '#remote-add-btn'];
+  document.querySelectorAll(addSelectors.join(',')).forEach((el) => {
+    el.disabled = !allowAdd;
+    el.style.opacity = allowAdd ? '' : '0.35';
+    el.style.cursor = allowAdd ? '' : 'not-allowed';
+  });
+
+  // Track card actions (pin/remove)
+  document.querySelectorAll('.track-card-actions').forEach((el) => {
+    el.style.display = allowQueue ? '' : 'none';
   });
 }
 
-function logoutAdmin() {
-  if (confirm('Are you sure you want to logout from admin mode?')) {
-    localStorage.removeItem('sas_user_role');
-    if (db && deviceId) {
-      db.ref(DB_ROOT + '/devices/' + deviceId).update({ role: 'guest', status: 'unknown' });
-    }
-    isAdmin = false;
-    isSuperAdmin = false;
-    currentUserRole = 'guest';
-    closeAdminPanel();
-    updateAccessUI('unknown');
+// Remote Panel Toggle
+let remotePanelMinimized = true;
+
+function minimizeRemotePanel() {
+  const panel = document.getElementById('remote-control-panel');
+  const stickyBtn = document.getElementById('sticky-remote-btn');
+  if (panel) panel.classList.add('hidden');
+  if (stickyBtn && isAuthorizedUser()) {
+    stickyBtn.classList.remove('hidden');
+  }
+  remotePanelMinimized = true;
+}
+
+function openRemotePanel() {
+  const panel = document.getElementById('remote-control-panel');
+  const stickyBtn = document.getElementById('sticky-remote-btn');
+  if (panel) panel.classList.remove('hidden');
+  if (stickyBtn) stickyBtn.classList.add('hidden');
+  remotePanelMinimized = false;
+}
+
+function toggleRemotePanel(forceState) {
+  const panel = document.getElementById('remote-control-panel');
+  if (!panel) return;
+
+  if (typeof forceState === 'boolean') {
+    if (forceState) openRemotePanel();
+    else minimizeRemotePanel();
+    return;
+  }
+
+  if (!panel.classList.contains('hidden')) {
+    minimizeRemotePanel();
+  } else {
+    openRemotePanel();
   }
 }
 
+// Modals: Access, Admin Panel, Worker Settings
 function openAccessModal() {
+  const isRevoked = (currentUserRole === 'admin' && deviceStatus === 'revoked');
+  const isApproved = (currentUserRole === 'admin' || currentUserRole === 'super_admin' || deviceStatus === 'approved') && !isRevoked;
+  const isPending = (currentUserRole === 'pending' || deviceStatus === 'pending');
+  const requestView = document.getElementById('access-modal-request-view');
+  const approvedView = document.getElementById('access-modal-approved-view');
+  const pendingView = document.getElementById('access-modal-pending-view');
+  const revokedView = document.getElementById('access-modal-revoked-view');
+  const footer = document.getElementById('access-modal-footer');
+  const approvedNameEl = document.getElementById('access-modal-user-name');
+  const pendingNameEl = document.getElementById('access-modal-pending-name');
+  const revokedNameEl = document.getElementById('access-modal-revoked-name');
+
+  const currentName = SAS.state.self?.name || localStorage.getItem('sas_device_name') || getDeviceName();
+
+  if (isRevoked) {
+    if (requestView) requestView.classList.add('hidden');
+    if (approvedView) approvedView.classList.add('hidden');
+    if (pendingView) pendingView.classList.add('hidden');
+    if (revokedView) revokedView.classList.remove('hidden');
+    if (footer) footer.classList.add('hidden');
+    if (revokedNameEl) revokedNameEl.textContent = currentName;
+  } else if (isApproved) {
+    if (requestView) requestView.classList.add('hidden');
+    if (pendingView) pendingView.classList.add('hidden');
+    if (revokedView) revokedView.classList.add('hidden');
+    if (approvedView) approvedView.classList.remove('hidden');
+    if (footer) footer.classList.add('hidden');
+    if (approvedNameEl) approvedNameEl.textContent = currentName;
+  } else if (isPending) {
+    if (requestView) requestView.classList.add('hidden');
+    if (approvedView) approvedView.classList.add('hidden');
+    if (revokedView) revokedView.classList.add('hidden');
+    if (pendingView) pendingView.classList.remove('hidden');
+    if (footer) footer.classList.add('hidden');
+    if (pendingNameEl) pendingNameEl.textContent = currentName;
+  } else {
+    // Guest requesting access
+    if (requestView) requestView.classList.remove('hidden');
+    if (approvedView) approvedView.classList.add('hidden');
+    if (pendingView) pendingView.classList.add('hidden');
+    if (revokedView) revokedView.classList.add('hidden');
+    if (footer) footer.classList.remove('hidden');
+    const input = document.getElementById('device-name-input');
+    if (input) input.value = localStorage.getItem('sas_device_name') || '';
+  }
+
   document.getElementById('access-request-overlay')?.classList.remove('hidden');
 }
 
@@ -2316,75 +1658,76 @@ function closeAccessModalOnBackdrop(e) {
   if (e.target === e.currentTarget) closeAccessModal();
 }
 
-function requestAccess() {
+async function requestAccess() {
   const nameInput = document.getElementById('device-name-input');
   const name = nameInput ? nameInput.value.trim() : '';
-  if (!name) { alert('Please enter your device or user name.'); return; }
+  if (!name) { alert('Please enter your name.'); return; }
   localStorage.setItem('sas_device_name', name);
-  if (db && deviceId) {
-    db.ref(DB_ROOT + '/devices/' + deviceId).set({
-      name,
-      status: 'pending',
-      role: 'guest',
-      requestedAt: Date.now(),
-      lastActive: Date.now()
-    });
-  }
-  deviceStatus = 'pending';
-  updateAccessUI('pending');
-  closeAccessModal();
-  alert('Access requested! The host admin can approve you in the admin panel.');
-}
 
-let remotePanelMinimized = false;
-function toggleRemotePanel() {
-  const panel = document.getElementById('remote-control-panel');
-  const stickyBtn = document.getElementById('sticky-remote-btn');
-  if (!panel || !stickyBtn) return;
-
-  if (remotePanelMinimized) {
-    panel.classList.remove('hidden');
-    stickyBtn.classList.add('hidden');
-    remotePanelMinimized = false;
-  } else {
-    panel.classList.add('hidden');
-    stickyBtn.classList.remove('hidden');
-    remotePanelMinimized = true;
+  try {
+    await SAS.ensureSession(name);
+    SAS.requestAccess(name);
+    currentUserRole = 'pending';
+    deviceStatus = 'pending';
+    document.body.classList.remove('role-super_admin', 'role-admin', 'role-guest');
+    document.body.classList.add('role-pending');
+    updateAccessUI('pending');
+    updateControlAccessUI();
+    applyRoleBasedVideoDisplay();
+    closeAccessModal();
+    alert('Access requested! The host admin can approve you in the admin panel.');
+  } catch (err) {
+    alert('Could not send access request to station: ' + err.message);
   }
 }
 
-async function hashPassphrase(str) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
-  return Array.prototype.map.call(new Uint8Array(buf), x => (('00' + x.toString(16)).slice(-2))).join('');
+async function promptAdminPassphrase() {
+  const entered = prompt('Enter Super Admin Passphrase:');
+  if (!entered) return;
+
+  try {
+    const res = await SAS.elevate(entered.trim());
+    if (res.ok) {
+      currentUserRole = res.role;
+      isAdmin = (res.role === 'admin' || res.role === 'super_admin');
+      isSuperAdmin = (res.role === 'super_admin');
+      deviceStatus = 'approved';
+
+      // Apply role class and update all UI
+      document.body.classList.remove('role-super_admin', 'role-admin', 'role-guest', 'role-pending');
+      document.body.classList.add(`role-${currentUserRole}`);
+      updateAccessUI('approved');
+      updateControlAccessUI();
+      applyRoleBasedVideoDisplay();
+
+      // If promoted to Super Admin, init YT player now
+      if (isSuperAdmin && !player && ytApiReady) {
+        initYouTubePlayer();
+      }
+
+      if (isSuperAdmin) {
+        showAdminPanelModal();
+      }
+    } else {
+      alert(res.error ? `Authentication failed (${res.error}). Please check your passphrase.` : 'Invalid Passphrase.');
+    }
+  } catch (err) {
+    alert('Connection error contacting Cloudflare Worker: ' + err.message);
+  }
 }
 
 async function openAdminPanel() {
-  const savedRole = localStorage.getItem('sas_user_role');
-  if (savedRole === 'super_admin' || savedRole === 'admin') {
+  if (isSuperAdmin) {
     showAdminPanelModal();
     return;
   }
-
-  const entered = prompt('Enter Super Admin or Admin Passphrase:');
-  if (!entered) return;
-
-  const enteredHash = await hashPassphrase(entered.trim());
-  if (enteredHash === SUPER_ADMIN_HASH) {
-    activateRoleMode('super_admin');
-    showAdminPanelModal();
-  } else {
-    alert('Invalid Passphrase.');
-  }
+  promptAdminPassphrase();
 }
 
 function showAdminPanelModal() {
   const overlay = document.getElementById('admin-panel-overlay');
   if (overlay) overlay.classList.remove('hidden');
-  if (db) {
-    db.ref(DB_ROOT + '/devices').once('value', (snap) => {
-      renderAdminDeviceList(snap.val() || {});
-    });
-  }
+  renderAdminDeviceList(SAS.state.devices);
 }
 
 function closeAdminPanel() {
@@ -2395,43 +1738,55 @@ function closeAdminPanelOnBackdrop(e) {
   if (e.target === e.currentTarget) closeAdminPanel();
 }
 
-function bindRemoteEvents() {
-  const rPlayPause = document.getElementById('remote-play-pause');
-  const rPrev = document.getElementById('remote-prev');
-  const rNext = document.getElementById('remote-next');
-  const rVol = document.getElementById('remote-volume-slider');
-  const rAdd = document.getElementById('remote-add-btn');
-  const rInput = document.getElementById('remote-link-input');
-
-  if (rPlayPause) {
-    rPlayPause.addEventListener('click', toggleMainPlayback);
-  }
-  if (rPrev) rPrev.addEventListener('click', playPrev);
-  if (rNext) rNext.addEventListener('click', playNext);
-  if (rVol) {
-    rVol.addEventListener('input', (e) => {
-      const level = parseInt(e.target.value, 10);
-      syncVolume(level, true);
-    });
-  }
-  if (rAdd && rInput) {
-    rAdd.addEventListener('click', () => {
-      const url = rInput.value.trim();
-      if (!url) return;
-      insertTrack(url, getDeviceName(deviceId));
-      rInput.value = '';
-    });
-    rInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') rAdd.click();
-    });
+function logoutAdmin() {
+  if (confirm('Are you sure you want to exit admin mode?')) {
+    localStorage.removeItem('sas_token');
+    closeAdminPanel();
+    location.reload();
   }
 }
 
-// Media Session Integration
+function clearAllOtherDevices() {
+  if (!isSuperAdmin) return;
+  if (!confirm('Remove all client devices from the registry?')) return;
+  SAS.state.devices.forEach((d) => {
+    if (d.deviceId !== deviceId) {
+      SAS.removeDevice(d.deviceId);
+    }
+  });
+}
+
+function openWorkerSettingsModal() {
+  if (!isSuperAdmin) return;
+  const overlay = document.getElementById('worker-settings-overlay');
+  const input = document.getElementById('worker-url-input');
+  if (input) {
+    input.value = localStorage.getItem('sas_worker_api') || '';
+  }
+  if (overlay) overlay.classList.remove('hidden');
+}
+
+function closeWorkerSettingsModal() {
+  document.getElementById('worker-settings-overlay')?.classList.add('hidden');
+}
+
+function closeWorkerSettingsModalOnBackdrop(e) {
+  if (e.target === e.currentTarget) closeWorkerSettingsModal();
+}
+
+function saveWorkerSettings() {
+  const input = document.getElementById('worker-url-input');
+  const val = input ? input.value.trim() : '';
+  SAS.setWorkerApi(val);
+  closeWorkerSettingsModal();
+  showConnectionBadge('connected', 'Worker URL updated — reconnecting...');
+}
+
+// Media Session & PiP Mini Player
 function initMediaSession() {
   if (!('mediaSession' in navigator)) return;
-  navigator.mediaSession.setActionHandler('play', () => { if (player && player.playVideo) player.playVideo(); });
-  navigator.mediaSession.setActionHandler('pause', () => { if (player && player.pauseVideo) player.pauseVideo(); });
+  navigator.mediaSession.setActionHandler('play', toggleMainPlayback);
+  navigator.mediaSession.setActionHandler('pause', toggleMainPlayback);
   navigator.mediaSession.setActionHandler('nexttrack', playNext);
   navigator.mediaSession.setActionHandler('previoustrack', playPrev);
 }
@@ -2445,12 +1800,6 @@ function updateMediaSession(title, artist) {
   });
 }
 
-function clearMediaSession() {
-  if (!('mediaSession' in navigator)) return;
-  navigator.mediaSession.playbackState = 'paused';
-}
-
-// Picture-in-Picture Mini Player
 let _pipWindow = null;
 function initPiPButton() {
   if (!('documentPictureInPicture' in window)) return;
@@ -2463,7 +1812,6 @@ async function openMiniPlayer() {
     alert('Picture-in-Picture requires Chrome or Edge 116+');
     return;
   }
-
   if (_pipWindow && !_pipWindow.closed) {
     _pipWindow.close();
     _pipWindow = null;
@@ -2504,287 +1852,228 @@ async function openMiniPlayer() {
   }
 }
 
-// =========================================================================
-//  VISIBILITY RECOVERY & PLAYER HEALTH CHECK (Issue 1)
-// =========================================================================
-
-// When the super admin's screen turns off or tab is backgrounded, the YT player
-// silently suspends. This system detects when visibility returns and auto-recovers.
+// Background Visibility Recovery
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !player) return;
 
   if (isSuperAdmin) {
-    // Screen just woke up — check if player needs recovery
     setTimeout(() => {
       if (!player || !player.getPlayerState) return;
       const currentState = player.getPlayerState();
-
-      // If we expected playing but player is paused/unstarted/cued, auto-resume
       if (expectedPlaybackState === 'playing' &&
         currentState !== YT.PlayerState.PLAYING &&
         currentState !== YT.PlayerState.BUFFERING) {
-        console.log('[SAS Recovery] Visibility restored — resuming frozen playback');
         player.playVideo();
-        logActivity('Auto-recovered playback after screen wake', 'play', /* forceBroadcast= */ false);
       }
-
-      // Re-broadcast current state so remote clients get fresh data
-      const vd = player.getVideoData && player.getVideoData();
-      const title = (vd && vd.title) ? vd.title.trim() : (document.getElementById('current-title')?.innerText || '');
-      broadcastNowPlaying(title, player.getPlayerState() === YT.PlayerState.PLAYING);
-    }, 500); // Small delay to let the player iframe reactivate
-  } else if (isAuthorizedUser()) {
-    // Regular Admin / approved devices: previously got NO active recovery at
-    // all here — they just sat passively waiting for the next periodic
-    // Firebase broadcast to happen to arrive and correct them. If the tab was
-    // frozen for a while (Chrome freezes hidden tabs after ~5 minutes) and
-    // the Firebase connection had to reconnect, that could take a noticeable
-    // moment, which is exactly what showed up as "video behind audio" after
-    // switching back. Force an immediate resync against the last known
-    // snapshot instead of waiting on the next tick — applyNowPlayingUI()
-    // recalculates the correct position using serverNow(), so it's accurate
-    // even if that snapshot itself is now several minutes stale.
+    }, 400);
+  } else {
     setTimeout(() => {
-      if (lastNowPlayingData) {
-        applyNowPlayingUI(lastNowPlayingData);
+      const np = SAS.state.nowPlaying;
+      if (np && np.videoId) {
+        applyNowPlayingToPlayer(np);
       }
-    }, 500);
+    }, 400);
   }
 });
 
-function startPlayerHealthCheck() {
-  if (healthCheckInterval) clearInterval(healthCheckInterval);
-  if (!isSuperAdmin) return;
+// Remote Panel Event Listeners
+function bindRemoteEvents() {
+  const rPlayPause = document.getElementById('remote-play-pause');
+  const rPrev = document.getElementById('remote-prev');
+  const rNext = document.getElementById('remote-next');
+  const rVol = document.getElementById('remote-volume-slider');
+  const rAdd = document.getElementById('remote-add-btn');
+  const rInput = document.getElementById('remote-link-input');
 
-  healthCheckInterval = setInterval(() => {
-    if (!player || !player.getPlayerState || !isSuperAdmin) return;
-
-    const currentState = player.getPlayerState();
-
-    // If we expected playing but player is frozen (paused/unstarted/cued and NOT ended)
-    if (expectedPlaybackState === 'playing' &&
-      currentState !== YT.PlayerState.PLAYING &&
-      currentState !== YT.PlayerState.BUFFERING &&
-      currentState !== YT.PlayerState.ENDED) {
-      console.log('[SAS HealthCheck] Player desync detected — expected playing, got state:', currentState);
-      player.playVideo();
-    }
-  }, 15000); // Every 15 seconds
-}
-
-function startHeartbeat() {
-  if (heartbeatInterval) clearInterval(heartbeatInterval);
-  if (!isSuperAdmin || !db) return;
-
-  // Write heartbeat immediately, then every 30 seconds
-  const writeHeartbeat = () => {
-    db.ref(DB_ROOT + '/heartbeat').set({
-      timestamp: Date.now(),
-      deviceId: deviceId,
-      version: APP_VERSION
+  if (rPlayPause) rPlayPause.addEventListener('click', toggleMainPlayback);
+  if (rPrev) rPrev.addEventListener('click', playPrev);
+  if (rNext) rNext.addEventListener('click', playNext);
+  if (rVol) {
+    rVol.addEventListener('input', (e) => {
+      syncVolume(parseInt(e.target.value, 10), true);
     });
-  };
-
-  writeHeartbeat();
-  heartbeatInterval = setInterval(writeHeartbeat, 30000);
-}
-
-// Time-sync broadcaster (Super Admin -> All Remotes)
-function startTimeSync() {
-  if (timeSyncInterval) clearInterval(timeSyncInterval);
-  if (!isSuperAdmin) return;
-
-  timeSyncInterval = setInterval(() => {
-    if (!isSuperAdmin || !player || typeof player.getPlayerState !== 'function') return;
-    const state = player.getPlayerState();
-    if (state === YT.PlayerState.PLAYING) {
-      const curTitle = document.getElementById('current-title')?.innerText || '';
-      broadcastNowPlaying(curTitle, true);
-    }
-  }, 3000);
-}
-
-// =========================================================================
-//  FORCE-FRESH RELOAD (Issue 6 continued)
-// =========================================================================
-// location.reload(true) is a legacy no-op in every modern browser — the
-// "bypass cache" boolean argument was dropped from the spec. Appending a
-// unique cache-busting query string is what actually guarantees the browser
-// treats this as a brand-new URL and skips its HTTP cache entirely.
-function forceFreshReload() {
-  try {
-    const url = new URL(location.href);
-    url.searchParams.set('_cb', Date.now().toString());
-    location.replace(url.toString());
-  } catch (_) {
-    location.reload();
-  }
-}
-
-// =========================================================================
-//  VERSION ENFORCEMENT (Issue 6)
-// =========================================================================
-
-function enforceAppVersion() {
-  if (!db) return;
-
-  // Super admin publishes the current required version
-  if (isSuperAdmin) {
-    db.ref(DB_ROOT + '/appVersion').set({
-      version: APP_VERSION,
-      updatedAt: Date.now()
+    rVol.addEventListener('change', (e) => {
+      flushBroadcastVolume(parseInt(e.target.value, 10));
     });
   }
-
-  // ALL clients listen for version changes and force-reload if outdated
-  db.ref(DB_ROOT + '/appVersion').on('value', (snap) => {
-    const data = snap.val();
-    if (!data || !data.version) return;
-
-    if (data.version !== APP_VERSION) {
-      console.warn('[SAS Version] Outdated version detected. Local:', APP_VERSION, 'Required:', data.version);
-      // Show a brief notice then force reload
-      const notice = document.createElement('div');
-      notice.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#e50914;color:white;text-align:center;padding:14px;font-weight:700;font-size:14px;font-family:sans-serif;';
-      notice.textContent = 'New version available — reloading...';
-      document.body.appendChild(notice);
-
-      // Clear service worker caches before reloading
-      if ('caches' in window) {
-        caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).then(() => {
-          setTimeout(forceFreshReload, 1200);
-        });
-      } else {
-        setTimeout(forceFreshReload, 1200);
-      }
-    }
-  });
+  if (rAdd && rInput) {
+    rAdd.addEventListener('click', () => {
+      const url = rInput.value.trim();
+      if (!url) return;
+      insertTrack(url);
+      rInput.value = '';
+    });
+    rInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') rAdd.click();
+    });
+  }
 }
 
-// =========================================================================
-//  SECURITY: ROLE RE-VALIDATION (Issue 5)
-// =========================================================================
-
-function validateRoleFromFirebase() {
-  if (!db || !deviceId) return;
-
-  db.ref(DB_ROOT + '/devices/' + deviceId).once('value', (snap) => {
-    const data = snap.val();
-    const savedRole = localStorage.getItem('sas_user_role');
-
-    if (!data) {
-      // Device record doesn't exist in Firebase at all — no role, elevated or
-      // not, can be trusted from localStorage alone. Nothing self-registers
-      // without a real Firebase record (super_admin included).
-      if (savedRole === 'admin' || savedRole === 'super_admin') {
-        console.warn('[SAS Security] Elevated role claimed but no Firebase record — reverting to guest');
-        localStorage.removeItem('sas_user_role');
-        isAdmin = false;
-        isSuperAdmin = false;
-        currentUserRole = 'guest';
-        updateAccessUI('unknown');
-      }
-      return;
-    }
-
-    const firebaseRole = data.role || 'guest';
-
-    // If locally claiming an elevated role but Firebase disagrees — revoke
-    // (prevents localStorage tampering for admin AND super_admin alike).
-    if ((savedRole === 'admin' || savedRole === 'super_admin') && firebaseRole !== savedRole) {
-      console.warn(`[SAS Security] Role mismatch: local=${savedRole}, Firebase=${firebaseRole} — reverting`);
-      localStorage.removeItem('sas_user_role');
-      isAdmin = false;
-      isSuperAdmin = false;
-      currentUserRole = 'guest';
-      updateAccessUI('unknown');
-    }
-  });
-}
-
-// =========================================================================
-//  SERVICE WORKER: REGISTER + UPDATE LISTENER (Issue 6)
-// =========================================================================
-// NOTE: registration was previously missing entirely — sw.js existed on disk
-// but no client ever installed it, so none of its caching or update-push
-// logic ever actually ran. This is what let stale, hard-cached browsers sit
-// on an old build indefinitely with no way to detect a new one.
-
+// Service Worker Registration & Updates
 function listenForSWUpdates() {
   if (!('serviceWorker' in navigator)) return;
 
   navigator.serviceWorker.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'SW_UPDATED') {
-      console.log('[SAS SW] New service worker activated — reloading for update');
-      // Clear caches and reload
-      if ('caches' in window) {
-        caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).then(() => {
-          forceFreshReload();
-        });
-      } else {
-        forceFreshReload();
-      }
+      console.log('[SAS SW] New service worker activated');
     }
   });
 
   navigator.serviceWorker.register('./sw.js').then((registration) => {
-    // Ask the browser to check sw.js for changes right now, rather than
-    // waiting for its own internal (up to 24h) update check on next
-    // navigation. This is what actually lets an already-open, never-closed
-    // tab discover a new deploy.
     registration.update().catch(() => { });
-
-    // Keep re-checking periodically while the tab stays open.
     setInterval(() => registration.update().catch(() => { }), 5 * 60 * 1000);
-
-    // If a new worker is already waiting (installed while we were away),
-    // activate it immediately instead of waiting for the next full reload.
     if (registration.waiting) {
       registration.waiting.postMessage({ type: 'SKIP_WAITING' });
     }
-
-    registration.addEventListener('updatefound', () => {
-      const newWorker = registration.installing;
-      if (newWorker) {
-        newWorker.addEventListener('statechange', () => {
-          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            // A new version has installed and is waiting behind the current
-            // one — tell it to take over immediately rather than sitting
-            // idle until every tab happens to close.
-            newWorker.postMessage({ type: 'SKIP_WAITING' });
-          }
-        });
-      }
-    });
   }).catch((err) => {
     console.warn('[SAS SW] Registration failed:', err);
   });
 }
 
-// Start the Firebase connection as early as possible — do NOT wait for
-// window 'load', which blocks on every page resource (fonts, CDN icons,
-// logo images, etc.) and can lag well behind YouTube's iframe_api callback.
-// The Firebase SDK scripts are loaded synchronously before this script tag
-// in index.html, so `firebase` is already defined by the time this file
-// executes — no need to wait for anything else.
-if (typeof firebase !== 'undefined') {
-  initFirebase();
+// Drag & Drop Queue Reordering
+if (playlistContainer) {
+  playlistContainer.addEventListener('dragstart', (event) => {
+    const row = event.target.closest('.track-card[data-track-index]');
+    if (!row) return;
+    dragFromIndex = Number(row.dataset.trackIndex);
+    row.classList.add('dragging');
+  });
+
+  playlistContainer.addEventListener('dragover', (event) => {
+    if (dragFromIndex < 0) return;
+    event.preventDefault();
+  });
+
+  playlistContainer.addEventListener('drop', (event) => {
+    if (dragFromIndex < 0) return;
+    const row = event.target.closest('.track-card[data-track-index]');
+    if (!row) return;
+    event.preventDefault();
+    const dropIndex = Number(row.dataset.trackIndex);
+    if (dragFromIndex !== dropIndex && isAuthorizedUser()) {
+      const moved = videoLinks[dragFromIndex];
+      videoLinks.splice(dragFromIndex, 1);
+      videoLinks.splice(dropIndex, 0, moved);
+      initPlaylist();
+      updatePlaylistUI();
+    }
+    dragFromIndex = -1;
+  });
 }
 
-// Lifecycle Boot
-window.addEventListener('load', () => {
-  updateControlAccessUI(); // fail-closed: locked until Firebase confirms otherwise
+// Queue Tabs Switcher
+document.addEventListener('DOMContentLoaded', () => {
+  const tabAll = document.getElementById('tab-all-queue');
+  const tabPin = document.getElementById('tab-pinned');
+  const tabReq = document.getElementById('tab-requests');
+
+  if (tabAll && tabPin && tabReq) {
+    tabAll.onclick = () => { setActiveTab(tabAll, 'all'); };
+    tabPin.onclick = () => { setActiveTab(tabPin, 'pinned'); };
+    tabReq.onclick = () => { setActiveTab(tabReq, 'requests'); };
+  }
+
+  function setActiveTab(btn, filter) {
+    [tabAll, tabPin, tabReq].forEach(b => b?.classList.remove('active'));
+    btn.classList.add('active');
+    activeQueueFilter = filter;
+    initPlaylist();
+  }
+});
+
+// App Boot Orchestration
+async function boot() {
+  initPlaylist();
+  updateControlAccessUI();
   bindRemoteEvents();
   initMediaSession();
   initPiPButton();
   listenForSWUpdates();
   startTrackTimer();
-  startWaveformAnimation();
+  applyRoleBasedVideoDisplay();
 
-  // Start health check, heartbeat, and time sync after a delay (allows player to initialize)
-  setTimeout(() => {
-    startPlayerHealthCheck();
-    startHeartbeat();
-    startTimeSync();
-  }, 3000);
+  const savedName = localStorage.getItem('sas_device_name') || getBrowserDeviceName();
+  localStorage.setItem('sas_device_name', savedName);
+
+  // Wire SAS Realtime Engine
+  SAS.on('state', applyState)
+    .on('tick', onServerTick)
+    .on('denied', onActionDenied)
+    .on('status', onConnectionStatus);
+
+  try {
+    await SAS.ensureSession(savedName);
+  } catch (err) {
+    console.warn('[SAS] Session prefetch note:', err.message);
+  }
+
+  SAS.connect();
+
+  // Populate version badge in header & add secret Super Admin elevation trigger
+  const versionBadge = document.getElementById('app-version-badge');
+  if (versionBadge) {
+    versionBadge.textContent = 'v' + APP_VERSION;
+    versionBadge.style.cursor = 'pointer';
+    versionBadge.addEventListener('click', () => {
+      if (!isSuperAdmin) {
+        promptAdminPassphrase();
+      }
+    });
+  }
+
+  // Ctrl+Shift+A shortcut to elevate to Super Admin when buttons are hidden
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+      e.preventDefault();
+      promptAdminPassphrase();
+    }
+  });
+
+  // Legacy Firebase Invalidation & Storage Cleanup
+  invalidateLegacyFirebaseVersions();
+}
+
+function invalidateLegacyFirebaseVersions() {
+  const firebaseVersionUrl = 'https://sas-premium-player-default-rtdb.firebaseio.com/sas-player/appVersion.json';
+  fetch(firebaseVersionUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      version: APP_VERSION,
+      updatedAt: Date.now(),
+      architecture: 'cloudflare-worker-do',
+      message: 'Upgraded to SAS Player v4.0.0 Cloudflare DO Architecture. Older Firebase versions invalidated.'
+    })
+  }).then(() => {
+    console.log('[SAS Invalidation] Legacy Firebase appVersion synchronized to v' + APP_VERSION);
+  }).catch((err) => {
+    console.warn('[SAS Invalidation] Legacy Firebase sync notice:', err);
+  });
+
+  // Clean up legacy Firebase cache/storage entries in the browser
+  try {
+    const legacyKeys = ['sas_player_cache', 'sas_device_status', 'sas_admin_pass'];
+    for (const key of legacyKeys) {
+      localStorage.removeItem(key);
+    }
+  } catch (e) { /* ignore */ }
+}
+
+// Handle unload/refresh for Super Admin host
+window.addEventListener('beforeunload', () => {
+  if (isSuperAdmin && SAS.state?.nowPlaying?.isPlaying) {
+    try {
+      SAS.pause();
+    } catch (_) { }
+  }
 });
+
+window.addEventListener('pagehide', () => {
+  if (isSuperAdmin && SAS.state?.nowPlaying?.isPlaying) {
+    try {
+      SAS.pause();
+    } catch (_) { }
+  }
+});
+
+window.addEventListener('load', boot);

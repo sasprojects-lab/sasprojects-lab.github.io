@@ -8,8 +8,10 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="sas-player-styles.css?v=3.1.4">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="sas-player-styles.css?v=4.0.2">
 </head>
 
 <body>
@@ -26,11 +28,12 @@
         <img src="sas-player-logo-1.png" alt="SAS" class="logo-dark">
         <img src="sas-player-logo-light.png" alt="SAS" class="logo-light">
       </div>
-      <div class="system-status-chip" id="system-status-chip" title="Real-time Network Telemetry">
+      <div class="system-status-chip" id="system-status-chip" title="Real-time Network Telemetry"
+        onclick="openWorkerSettingsModal()" style="cursor: pointer;">
         <span class="status-pulse-dot"></span>
-        <span id="telemetry-status-text">RTDB: 12ms • Sync Active</span>
+        <span id="telemetry-status-text">DO: Connecting...</span>
       </div>
-      <span class="app-version-badge" id="app-version-badge" title="App Version">v3.1.0</span>
+      <span class="app-version-badge" id="app-version-badge" title="App Version">v4.0.0</span>
     </div>
 
     <!-- Center Search & Command Input -->
@@ -51,7 +54,13 @@
         <i class="fas fa-sun"></i>
         <span>Light</span>
       </button>
-      <button class="remote-access-btn" id="request-access-btn" onclick="openAccessModal()" title="Remote Control Access">
+      <button class="worker-settings-btn" id="worker-settings-btn" onclick="openWorkerSettingsModal()"
+        title="Cloudflare Worker Connection Settings">
+        <i class="fas fa-server"></i>
+        <span>Worker</span>
+      </button>
+      <button class="remote-access-btn" id="request-access-btn" onclick="openAccessModal()"
+        title="Remote Control Access">
         <i class="fas fa-wifi"></i>
         <span>Remote</span>
       </button>
@@ -60,7 +69,8 @@
         <span>Admin</span>
         <span class="notif-dot"></span>
       </button>
-      <button class="pip-btn hidden" id="pip-btn" onclick="openMiniPlayer()" title="Floating Picture-in-Picture Mini Player">
+      <button class="pip-btn hidden" id="pip-btn" onclick="openMiniPlayer()"
+        title="Floating Picture-in-Picture Mini Player">
         <i class="fas fa-external-link-alt"></i>
         <span>Pop Out</span>
       </button>
@@ -81,9 +91,11 @@
           <span>Queue</span>
         </div>
         <div class="queue-actions">
-          <button onclick="loadDefaultPlaylistAction()" title="Restore default studio playlist" class="btn-restore-default"><i class="fas fa-undo"></i></button>
+          <button onclick="loadDefaultPlaylistAction()" title="Restore default studio playlist"
+            class="btn-restore-default"><i class="fas fa-undo"></i></button>
           <button onclick="clearAllTracks()" title="Clear entire playlist"><i class="fas fa-trash-alt"></i></button>
-          <button onclick="clearPlayedTracks()" title="Remove tracks before current position"><i class="fas fa-broom"></i></button>
+          <button onclick="clearPlayedTracks()" title="Remove tracks before current position"><i
+              class="fas fa-broom"></i></button>
         </div>
       </div>
 
@@ -112,6 +124,24 @@
         </div>
         <div id="player-container">
           <div id="yt-iframe"></div>
+          <!-- Thumbnail overlay for Admin/Guest (no live video, just artwork) -->
+          <div id="thumbnail-overlay" class="thumbnail-overlay hidden">
+            <img id="thumbnail-img" src="" alt="Now Playing" />
+            <!-- <div class="thumbnail-role-badge" id="thumbnail-role-badge">
+              <i class="fas fa-headphones"></i>
+              <span>Listening Mode</span>
+            </div> -->
+            <!-- Live Track Progress Overlay for Thumbnail Viewers -->
+            <div class="thumb-progress-overlay">
+              <div class="thumb-progress-track">
+                <div class="thumb-progress-fill" id="thumb-progress-fill"></div>
+              </div>
+              <div class="thumb-progress-labels">
+                <span id="thumb-progress-current">0:00</span>
+                <span id="thumb-progress-duration">--:--</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -160,7 +190,8 @@
             </div>
             <h2 class="deck-track-title" id="current-title">Select a track to begin</h2>
             <div class="deck-track-artist" id="sidebar-title">44.1 kHz Hi-Fi YouTube Master Feed</div>
-            <div class="deck-track-timer" id="deck-track-timer" style="font-family: var(--font-mono); font-size: 11px; opacity: 0.75; margin-top: 4px;">
+            <div class="deck-track-timer" id="deck-track-timer"
+              style="font-family: var(--font-mono); font-size: 11px; opacity: 0.75; margin-top: 4px;">
               <span id="timer-current">0:00</span> / <span id="timer-duration">--:--</span>
             </div>
 
@@ -180,15 +211,19 @@
         <!-- Master Transport Toolbar -->
         <div class="master-controls-toolbar">
           <div class="transport-btn-cluster">
-            <button class="transport-btn" onclick="playPrev()" title="Previous Track"><i class="fas fa-step-backward"></i></button>
-            <button class="transport-btn primary-play" id="main-play-pause-btn" onclick="toggleMainPlayback()" title="Play / Pause"><i class="fas fa-play" id="main-play-pause-icon"></i></button>
-            <button class="transport-btn" onclick="playNext()" title="Next Track"><i class="fas fa-step-forward"></i></button>
+            <button class="transport-btn" onclick="playPrev()" title="Previous Track"><i
+                class="fas fa-step-backward"></i></button>
+            <button class="transport-btn primary-play" id="main-play-pause-btn" onclick="toggleMainPlayback()"
+              title="Play / Pause"><i class="fas fa-play" id="main-play-pause-icon"></i></button>
+            <button class="transport-btn" onclick="playNext()" title="Next Track"><i
+                class="fas fa-step-forward"></i></button>
           </div>
 
           <!-- Master Volume Slider -->
           <div class="precision-volume-deck">
             <i class="fas fa-volume-up"></i>
-            <input type="range" id="master-volume-slider" min="0" max="100" value="100" title="Master Volume" oninput="onMasterVolumeInput(this)">
+            <input type="range" id="master-volume-slider" min="0" max="100" value="100" title="Master Volume"
+              oninput="onMasterVolumeInput(this)" onchange="onMasterVolumeChange(this)">
             <span id="master-volume-label" style="font-family: var(--font-mono); font-size: 11px;">100%</span>
           </div>
         </div>
@@ -196,34 +231,43 @@
 
     </section>
 
-    <!-- RIGHT PANE: Network Fleet & Telemetry Deck -->
-    <aside class="studio-pane fleet-pane">
-      <div class="pane-header">
-        <div class="pane-title">
-          <i class="fas fa-network-wired"></i>
-          <span>Connected Fleet (<span id="fleet-count-badge">1</span>)</span>
+    <!-- RIGHT COLUMN: Network Fleet & Telemetry Deck -->
+    <aside class="fleet-column">
+
+      <!-- Card 1: Connected Fleet Card -->
+      <div class="studio-pane-card fleet-card">
+        <div class="pane-header">
+          <div class="pane-title">
+            <i class="fas fa-network-wired"></i>
+            <span>Connected Fleet (<span id="fleet-count-badge">1</span>)</span>
+          </div>
+          <div class="pane-controls">
+            <button class="pane-action-btn" title="Open Admin Panel" onclick="openAdminPanel()"><i
+                class="fas fa-user-shield"></i></button>
+          </div>
         </div>
-        <div class="pane-controls">
-          <button class="pane-action-btn" title="Open Admin Panel" onclick="openAdminPanel()"><i class="fas fa-user-shield"></i></button>
+
+        <!-- Real-time Connected Device Fleet Cards -->
+        <div class="device-fleet-scroll-list" id="fleet-device-list">
+          <!-- Rendered dynamically from Cloudflare Durable Object -->
         </div>
       </div>
 
-      <!-- Real-time Connected Device Fleet Cards -->
-      <div class="device-fleet-scroll-list" id="fleet-device-list">
-        <!-- Rendered dynamically from Firebase -->
+      <!-- Card 2: Real-Time Activity Telemetry Stream Card -->
+      <div class="studio-pane-card radar-card">
+        <div class="pane-header">
+          <div class="pane-title stream-header-left">
+            <span class="live-radar-pulse"></span>
+            <span>Activity Radar</span>
+          </div>
+          <span class="event-live-pill" id="event-live-pill"><i class="fas fa-circle"></i> LIVE</span>
+        </div>
+
+        <div class="live-activity-stream" id="live-activity-stream">
+          <!-- Rendered dynamically with rich animated event cards -->
+        </div>
       </div>
 
-      <!-- Real-Time Activity Telemetry Stream -->
-      <div class="live-activity-stream-header">
-        <div class="stream-header-left">
-          <span class="live-radar-pulse"></span>
-          <span>Activity Radar</span>
-        </div>
-        <span class="event-live-pill" id="event-live-pill"><i class="fas fa-circle"></i> LIVE</span>
-      </div>
-      <div class="live-activity-stream" id="live-activity-stream">
-        <!-- Rendered dynamically with rich animated event cards -->
-      </div>
     </aside>
 
   </main>
@@ -232,7 +276,8 @@
   <div class="event-toast-hub" id="event-toast-hub"></div>
 
   <!-- Sticky Floating Remote Controller Button -->
-  <button id="sticky-remote-btn" class="sticky-remote-btn hidden" onclick="toggleRemotePanel()" title="Open Remote Controller">
+  <button id="sticky-remote-btn" class="sticky-remote-btn hidden" onclick="openRemotePanel()"
+    title="Open Remote Controller">
     <i class="fas fa-gamepad"></i>
   </button>
 
@@ -248,14 +293,16 @@
           <span id="remote-now-playing-title">Select a track to begin</span>
         </div>
       </div>
-      <button class="remote-minimize-btn" id="remote-minimize-btn" onclick="toggleRemotePanel()" title="Minimize Remote Panel">
+      <button class="remote-minimize-btn" id="remote-minimize-btn" onclick="minimizeRemotePanel()"
+        title="Minimize Remote Panel">
         <i class="fas fa-minus"></i>
       </button>
     </div>
     <div class="remote-controls-body">
       <div class="remote-btn-group">
         <button class="remote-btn" id="remote-prev" title="Previous Track"><i class="fas fa-step-backward"></i></button>
-        <button class="remote-btn play-pause-remote" id="remote-play-pause" title="Play / Pause"><i class="fas fa-play"></i></button>
+        <button class="remote-btn play-pause-remote" id="remote-play-pause" title="Play / Pause"><i
+            class="fas fa-play"></i></button>
         <button class="remote-btn" id="remote-next" title="Next Track"><i class="fas fa-step-forward"></i></button>
       </div>
       <div class="remote-volume-group">
@@ -277,13 +324,70 @@
         <button class="close-modal-btn" onclick="closeAccessModal()">&times;</button>
       </div>
       <div class="modal-body">
-        <p>Enter your device name or identifier so Super Admin can grant you play/pause access:</p>
-        <div class="modal-input-group">
-          <label for="device-name-input">Device Name / Your Name</label>
-          <input type="text" id="device-name-input" placeholder="e.g. Rahul's Phone, Living Room PC">
+        <!-- Guest Request View (Before Approval) -->
+        <div id="access-modal-request-view">
+          <p>Enter your device name or identifier so Super Admin can grant you play/pause access:</p>
+          <div class="modal-input-group">
+            <label for="device-name-input">Device Name / Your Name</label>
+            <input type="text" id="device-name-input" placeholder="e.g. Rahul's Phone, Living Room PC">
+          </div>
+        </div>
+
+        <!-- Approved Admin View (After Approval: shows only device name, no buttons) -->
+        <div id="access-modal-approved-view" class="hidden" style="text-align: center; padding: 18px 8px 8px 8px;">
+          <div
+            style="width: 52px; height: 52px; border-radius: 50%; background: rgba(0, 242, 254, 0.12); border: 2px solid var(--accent-cyan); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px;">
+            <i class="fas fa-user-check" style="font-size: 22px; color: var(--accent-cyan);"></i>
+          </div>
+          <div
+            style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 6px; font-weight: 700;">
+            Connected As</div>
+          <div id="access-modal-user-name"
+            style="font-size: 20px; font-weight: 800; color: var(--text-main); margin-bottom: 10px;"></div>
+          <div>
+            <span class="device-role-pill admin" style="font-size: 11px; padding: 3px 10px; border-radius: 6px;"><i
+                class="fas fa-shield-alt"></i> Approved Admin</span>
+          </div>
+        </div>
+
+        <!-- Pending View -->
+        <div id="access-modal-pending-view" class="hidden" style="text-align: center; padding: 18px 8px 8px 8px;">
+          <div
+            style="width: 52px; height: 52px; border-radius: 50%; background: rgba(243, 156, 18, 0.12); border: 2px solid #f39c12; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px;">
+            <i class="fas fa-clock" style="font-size: 22px; color: #f39c12;"></i>
+          </div>
+          <div
+            style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #f39c12; margin-bottom: 6px; font-weight: 700;">
+            Access Requested</div>
+          <div id="access-modal-pending-name"
+            style="font-size: 18px; font-weight: 800; color: var(--text-main); margin-bottom: 10px;"></div>
+          <div>
+            <span class="device-role-pill pending" style="font-size: 11px; padding: 3px 10px; border-radius: 6px;"><i
+                class="fas fa-hourglass-half"></i> Waiting for Super Admin Approval</span>
+          </div>
+        </div>
+
+        <!-- Revoked Admin View -->
+        <div id="access-modal-revoked-view" class="hidden" style="text-align: center; padding: 18px 8px 8px 8px;">
+          <div
+            style="width: 52px; height: 52px; border-radius: 50%; background: rgba(231, 76, 60, 0.12); border: 2px solid #e74c3c; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px;">
+            <i class="fas fa-ban" style="font-size: 22px; color: #e74c3c;"></i>
+          </div>
+          <div
+            style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #e74c3c; margin-bottom: 6px; font-weight: 700;">
+            Controls Revoked</div>
+          <div id="access-modal-revoked-name"
+            style="font-size: 18px; font-weight: 800; color: var(--text-main); margin-bottom: 10px;"></div>
+          <div>
+            <span class="device-role-pill admin"
+              style="font-size: 11px; padding: 3px 10px; border-radius: 6px; background: rgba(231, 76, 60, 0.15); border: 1px solid rgba(231, 76, 60, 0.3); color: #e74c3c;"><i
+                class="fas fa-shield-alt"></i> Admin Role Retained</span>
+          </div>
+          <p style="font-size: 12px; color: var(--text-muted); margin-top: 12px; margin-bottom: 0;">Super Admin has
+            temporarily taken back playback &amp; remote controls for this device.</p>
         </div>
       </div>
-      <div class="modal-footer">
+      <div class="modal-footer" id="access-modal-footer">
         <button class="btn-secondary" onclick="closeAccessModal()">Cancel</button>
         <button class="btn-primary" onclick="requestAccess()">Request Access</button>
       </div>
@@ -294,17 +398,20 @@
   <div class="modal-overlay hidden" id="admin-panel-overlay" onclick="closeAdminPanelOnBackdrop(event)">
     <div class="modal-card modal-large">
       <div class="modal-header">
-        <h3><i class="fas fa-user-shield"></i> Super Admin Panel <span class="badge-count hidden" id="pending-badge">0</span></h3>
+        <h3><i class="fas fa-user-shield"></i> Super Admin Panel <span class="badge-count hidden"
+            id="pending-badge">0</span></h3>
         <button class="close-modal-btn" onclick="closeAdminPanel()">&times;</button>
       </div>
       <div class="modal-body">
-        <p class="admin-subtitle">Approve or revoke devices that are allowed to remotely play, pause, change tracks, or add links to this playlist.</p>
+        <p class="admin-subtitle">Approve or revoke devices that are allowed to remotely play, pause, change tracks, or
+          add links to this playlist.</p>
         <div class="device-list" id="admin-device-list">
           <!-- Rendered dynamically -->
         </div>
       </div>
       <div class="modal-footer admin-panel-footer">
-        <button class="btn-danger-outline hidden" id="clear-all-devices-btn" onclick="clearAllOtherDevices()" title="Remove all other device entries from the list">
+        <button class="btn-danger-outline hidden" id="clear-all-devices-btn" onclick="clearAllOtherDevices()"
+          title="Remove all other device entries from the list">
           <i class="fas fa-trash-alt"></i> Clear All Others
         </button>
         <button class="btn-secondary" onclick="logoutAdmin()">
@@ -314,16 +421,34 @@
     </div>
   </div>
 
-  <!-- Connection Status Toast -->
-  <div class="connection-badge hidden" id="connection-badge">
-    <span class="status-dot"></span>
-    <span id="connection-status-text">Connected</span>
+  <!-- Cloudflare Worker Settings Modal -->
+  <div class="modal-overlay hidden" id="worker-settings-overlay" onclick="closeWorkerSettingsModalOnBackdrop(event)">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3><i class="fas fa-cloud"></i> Cloudflare Worker API</h3>
+        <button class="close-modal-btn" onclick="closeWorkerSettingsModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Current Cloudflare Worker endpoint for Realtime WebSockets &amp; Auth:</p>
+        <div class="modal-input-group">
+          <label for="worker-url-input">Worker API URL</label>
+          <input type="text" id="worker-url-input" placeholder="https://sas-player.sasprojects.workers.dev">
+        </div>
+        <p style="font-size: 11.5px; color: var(--text-muted); margin-top: 8px;">
+          Leave empty to auto-detect: <code>http://localhost:8787</code> when running locally or the default production
+          worker.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeWorkerSettingsModal()">Cancel</button>
+        <button class="btn-primary" onclick="saveWorkerSettings()">Save &amp; Connect</button>
+      </div>
+    </div>
   </div>
 
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
   <script src="https://www.youtube.com/iframe_api"></script>
-  <script src="sas-player-script.js?v=3.1.4"></script>
+  <script src="sas-realtime.js?v=4.0.2"></script>
+  <script src="sas-player-script.js?v=4.0.2"></script>
 </body>
 
 </html>

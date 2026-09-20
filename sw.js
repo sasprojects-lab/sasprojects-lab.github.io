@@ -1,11 +1,12 @@
-// SAS Player Service Worker v3.1.4
+// SAS Player Service Worker v4.0.2
 // Network-first for app shell, cache fallback for offline resilience
 // Forces immediate activation and notifies clients on update
 
-const CACHE_NAME = 'sas-player-v3.1.4';
+const CACHE_NAME = 'sas-player-v4.0.2';
 const SHELL_ASSETS = [
   './index.html',
   './sas-player-styles.css',
+  './sas-realtime.js',
   './sas-player-script.js',
   './sas-player-logo-1.png',
   './sas-player-logo-light.png',
@@ -61,7 +62,7 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(event.request.url);
 
-  // Let YouTube API / Firebase / CDN requests go straight to network
+  // Let YouTube API / Cloudflare Worker API / CDN requests go straight to network
   if (
     url.origin !== self.location.origin ||
     url.pathname.startsWith('/api/')

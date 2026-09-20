@@ -1,0 +1,16 @@
+name = "sas-player"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+# Cloudflare Secrets to configure:
+#   npx wrangler secret put TOKEN_SECRET            (random 32+ chars)
+#   npx wrangler secret put SUPER_ADMIN_PASSPHRASE  (e.g. your master password)
+#   npx wrangler secret put ADMIN_PASSPHRASE        (e.g. your secondary password)

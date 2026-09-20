@@ -1,0 +1,16 @@
+{
+  "name": "sas-player",
+  "version": "4.0.0",
+  "description": "SAS Player - Realtime audio master deck powered by Cloudflare Workers and Durable Objects",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250224.0",
+    "typescript": "^5.7.3",
+    "wrangler": "^3.109.2"
+  }
+}
