@@ -107,13 +107,15 @@ export class Room {
   constructor(private ctx: DurableObjectState, private env: Env) {
     ctx.blockConcurrencyWhile(async () => {
       const stored = await ctx.storage.get<RoomState>("state");
-      if (stored && Array.isArray(stored.queue) && stored.queue.length > 0) {
+      // Accept ANY stored state that has a valid structure — even if queue is empty.
+      // A cleared queue is perfectly valid (user intentionally cleared it).
+      // Only fall back to INITIAL_STATE if there's truly no stored state at all.
+      if (stored && typeof stored === "object" && Array.isArray(stored.queue) && stored.devices && stored.nowPlaying) {
         this.state = stored;
-        if (this.state.devices) {
-          for (const d of Object.values(this.state.devices)) {
-            if (!d.status) {
-              d.status = d.role === "super_admin" ? "approved" : (d.role === "admin" ? "approved" : (d.role === "pending" ? "pending" : "guest"));
-            }
+        // Backfill missing status fields on legacy device records
+        for (const d of Object.values(this.state.devices)) {
+          if (!d.status) {
+            d.status = d.role === "super_admin" ? "approved" : (d.role === "admin" ? "approved" : (d.role === "pending" ? "pending" : "guest"));
           }
         }
       } else {
@@ -234,11 +236,18 @@ export class Room {
     }
 
     const me = this.state.devices[ident.sub];
-    // Guests or unauthorized devices cannot execute room commands
-    if (!me || !this.isAuthorized(ident.sub)) return;
+
+    // Registered guests with "add" permission can submit tracks via WebSocket.
+    // All other commands require admin/super_admin authorization.
+    // Unregistered guests (no device entry) cannot do anything except requestAccess.
+    if (!me) return;
 
     const can = (perm: string) => PERMS[me.role]?.has(perm) ?? false;
     const deny = () => ws.send(JSON.stringify({ t: "denied", action: msg.t }));
+
+    // Non-authorized users (guests, pending) can only use permissions granted to their role.
+    // Block all commands except those the role has permissions for.
+    if (!this.isAuthorized(ident.sub) && msg.t !== "addTrack") return;
 
     me.lastSeen = Date.now();
 
@@ -454,6 +463,12 @@ export class Room {
         break;
       }
 
+      /* ---- heartbeat keepalive ---- */
+      case "ping": {
+        ws.send(JSON.stringify({ t: "pong" }));
+        return;    // no state change, no save
+      }
+
       default:
         return;
     }
@@ -490,6 +505,11 @@ export class Room {
       await this.save();
       this.broadcastState();
     }
+  }
+
+  async webSocketError(ws: WebSocket) {
+    // Treat errors same as close — update lastSeen and broadcast
+    await this.webSocketClose(ws);
   }
 
   /* ---------------- helpers ---------------- */

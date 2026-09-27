@@ -1,15 +1,16 @@
-// SAS Player Service Worker v4.0.2
+// SAS Player Service Worker v4.2.0
 // Network-first for app shell, cache fallback for offline resilience
 // Forces immediate activation and notifies clients on update
 
-const CACHE_NAME = 'sas-player-v4.0.2';
+const CACHE_NAME = 'sas-player-v4.2.0';
 const SHELL_ASSETS = [
   './index.html',
   './sas-player-styles.css',
-  './sas-realtime.js',
-  './sas-player-script.js',
+  './sas-realtime.min.js',
+  './sas-player-script.min.js',
   './sas-player-logo-1.png',
   './sas-player-logo-light.png',
+  './favicon.svg',
   './manifest.json'
 ];
 
@@ -20,8 +21,8 @@ self.addEventListener('install', (event) => {
       for (const asset of SHELL_ASSETS) {
         try {
           await cache.add(asset);
-        } catch (err) {
-          console.warn('[SW] Asset cached failed (non-fatal):', asset);
+        } catch (_) {
+          // Asset caching failed non-fatally — silently continue
         }
       }
     })

@@ -1,23 +1,28 @@
 /* ------------------------------------------------------------------ *
  * SAS realtime client — Cloudflare Workers + Durable Objects engine
+ * v4.2.0 — Hardened: tamper-proof closure, frozen state, no leaks
  * ------------------------------------------------------------------ */
 
 const SAS = (() => {
-  let ws = null;
-  let backoff = 1000;
-  let reconnectTimer = null;
-  let serverSkew = 0;               // serverTime - clientTime
-  let token = localStorage.getItem("sas_token") || null;
-  let isIntentionalClose = false;
+  let _ws = null;
+  let _backoff = 1000;
+  let _reconnectTimer = null;
+  let _serverSkew = 0;
+  let _token = localStorage.getItem("sas_token") || null;
+  let _intentionalClose = false;
+  let _heartbeatTimer = null;
+  let _connectAttemptsSinceSuccess = 0;
+  let _currentRole = "pending";
+  let _currentStatus = "guest";
 
-  const handlers = {
+  const _handlers = {
     state: [],
     tick: [],
     denied: [],
     status: []
   };
 
-  let latest = {
+  let _latest = {
     you: null,
     devices: [],
     queue: [],
@@ -26,7 +31,22 @@ const SAS = (() => {
     serverTime: Date.now()
   };
 
-  function getWorkerApi() {
+  /* --- Security cleanup: purge any legacy/dangerous keys ---------- */
+  (function _purgeInsecureKeys() {
+    try {
+      // CRITICAL: remove passphrase that was stored in previous versions
+      localStorage.removeItem("sas_elev_cred");
+      // Remove role hints and legacy role keys
+      localStorage.removeItem("sas_role_hint");
+      localStorage.removeItem("sas_user_role");
+      // Legacy Firebase keys
+      localStorage.removeItem("sas_player_cache");
+      localStorage.removeItem("sas_device_status");
+      localStorage.removeItem("sas_admin_pass");
+    } catch (_) { }
+  })();
+
+  function _getWorkerApi() {
     if (window.SAS_API) return window.SAS_API.replace(/\/+$/, "");
     const custom = localStorage.getItem("sas_worker_api");
     if (custom) return custom.replace(/\/+$/, "");
@@ -39,228 +59,277 @@ const SAS = (() => {
     } else {
       localStorage.setItem("sas_worker_api", url.trim().replace(/\/+$/, ""));
     }
-    // Reconnect on api endpoint change
-    if (ws) {
+    if (_ws) {
       disconnect();
       setTimeout(connect, 300);
     }
   }
 
-  const emit = (evt, data) => handlers[evt]?.forEach(fn => {
-    try { fn(data); } catch (err) { console.error(`[SAS ${evt} handler error]:`, err); }
+  const _emit = (evt, data) => _handlers[evt]?.forEach(fn => {
+    try { fn(data); } catch (_) { /* swallow handler errors silently */ }
   });
 
   const on = (evt, fn) => {
-    if (handlers[evt] && typeof fn === 'function') {
-      handlers[evt].push(fn);
+    if (_handlers[evt] && typeof fn === 'function') {
+      _handlers[evt].push(fn);
     }
-    return SAS;
+    return api;
   };
 
   const off = (evt, fn) => {
-    if (handlers[evt]) {
-      handlers[evt] = handlers[evt].filter(f => f !== fn);
+    if (_handlers[evt]) {
+      _handlers[evt] = _handlers[evt].filter(f => f !== fn);
     }
-    return SAS;
+    return api;
   };
 
   /* --- session: establishes cryptographic device identity ---------- */
   async function ensureSession(name) {
-    const api = getWorkerApi();
+    const endpoint = _getWorkerApi();
     try {
-      const res = await fetch(`${api}/api/session`, {
+      const res = await fetch(`${endpoint}/api/session`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(_token ? { Authorization: `Bearer ${_token}` } : {}),
         },
         body: JSON.stringify({ name: name ?? null }),
       });
       if (!res.ok) {
-        // If old/stale token was rejected, clear and retry once
-        if (token) {
-          token = null;
+        if (_token) {
+          _token = null;
           localStorage.removeItem("sas_token");
           return ensureSession(name);
         }
-        throw new Error(`Session request returned ${res.status}`);
+        throw new Error("Session request failed");
       }
-      const data = await res.json();     // { deviceId, name, token }
-      token = data.token;
-      localStorage.setItem("sas_token", token);
+      const data = await res.json();
+      _token = data.token;
+      localStorage.setItem("sas_token", _token);
       return data;
     } catch (err) {
-      console.warn("[SAS] ensureSession failed:", err.message);
       throw err;
     }
   }
 
-  /* --- elevation: verifies passphrase server-side ------------------ */
+  /* --- elevation: verifies passphrase server-side ------------------
+   * The passphrase is sent ONCE over HTTPS, verified by the Worker,
+   * and NEVER stored client-side. The role is persisted server-side
+   * in the Durable Object state. On reconnect, the DO remembers
+   * the device's role via the JWT-identified deviceId.
+   * ---------------------------------------------------------------- */
   async function elevate(passphrase) {
-    const api = getWorkerApi();
+    const endpoint = _getWorkerApi();
     try {
-      if (!token) {
+      if (!_token) {
         await ensureSession();
       }
-      const res = await fetch(`${api}/api/elevate`, {
+      const res = await fetch(`${endpoint}/api/elevate`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${_token}`,
         },
         body: JSON.stringify({ passphrase }),
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        return { ok: false, status: res.status, error: errData.error || `HTTP ${res.status}` };
+        return { ok: false, status: res.status, error: errData.error || "Authentication failed" };
       }
       const data = await res.json();
+      if (data.role) {
+        _currentRole = data.role;
+        _currentStatus = "approved";
+      }
+      // Role is returned for UI update ONLY — never stored in localStorage
       return { ok: true, role: data.role };
     } catch (err) {
-      console.error("[SAS] elevate error:", err);
-      return { ok: false, error: err.message };
+      return { ok: false, error: "Connection error" };
+    }
+  }
+
+  /* --- Heartbeat keepalive ---------------------------------------- */
+  function _startHeartbeat() {
+    _stopHeartbeat();
+    _heartbeatTimer = setInterval(() => {
+      if (_ws && _ws.readyState === WebSocket.OPEN) {
+        try {
+          _ws.send(JSON.stringify({ t: "ping" }));
+        } catch (_) { }
+      }
+    }, 30000);
+  }
+
+  function _stopHeartbeat() {
+    if (_heartbeatTimer) {
+      clearInterval(_heartbeatTimer);
+      _heartbeatTimer = null;
     }
   }
 
   function connect() {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
+    if (_reconnectTimer) {
+      clearTimeout(_reconnectTimer);
+      _reconnectTimer = null;
     }
-    if (!token) {
-      console.warn("[SAS] connect() called without token, obtaining session first...");
-      ensureSession().then(() => connect()).catch(err => {
-        emit("status", "error");
-        scheduleReconnect();
+    if (!_token) {
+      ensureSession().then(() => connect()).catch(() => {
+        _emit("status", "error");
+        _scheduleReconnect();
       });
       return;
     }
 
-    isIntentionalClose = false;
-    const api = getWorkerApi();
-    const wsUrl = api.replace(/^http/, "ws");
+    _intentionalClose = false;
+    _connectAttemptsSinceSuccess++;
+    const endpoint = _getWorkerApi();
+    const wsUrl = endpoint.replace(/^http/, "ws");
 
     try {
-      // Subprotocol array: ["sas.v1", token]
-      ws = new WebSocket(`${wsUrl}/api/ws`, ["sas.v1", token]);
+      _ws = new WebSocket(`${wsUrl}/api/ws`, ["sas.v1", _token]);
 
-      ws.onopen = () => {
-        backoff = 1000;
-        emit("status", "connected");
+      _ws.onopen = () => {
+        _backoff = 1000;
+        _connectAttemptsSinceSuccess = 0;
+        _startHeartbeat();
+        _emit("status", "connected");
       };
 
-      ws.onmessage = (e) => {
+      _ws.onmessage = (e) => {
         try {
           const msg = JSON.parse(e.data);
           if (msg.t === "state") {
-            serverSkew = (msg.serverTime || Date.now()) - Date.now();
-            latest = msg;
-            emit("state", msg);
+            _serverSkew = (msg.serverTime || Date.now()) - Date.now();
+            _latest = msg;
+            if (msg.you) {
+              _currentRole = msg.you.role || "guest";
+              _currentStatus = msg.you.status || (msg.you.role === "admin" ? "approved" : (msg.you.role === "pending" ? "pending" : "guest"));
+            }
+            _emit("state", msg);
           } else if (msg.t === "tick") {
-            emit("tick", msg);
+            _emit("tick", msg);
           } else if (msg.t === "denied") {
-            emit("denied", msg.action);
+            _emit("denied", msg.action);
           }
-        } catch (err) {
-          console.error("[SAS] Failed to parse message:", err);
+          // pong and unknown message types are silently ignored
+        } catch (_) { }
+      };
+
+      _ws.onclose = () => {
+        _stopHeartbeat();
+        _emit("status", "reconnecting");
+
+        // If repeated rapid failures, token may be stale — clear and re-establish
+        if (!_intentionalClose && _connectAttemptsSinceSuccess > 2) {
+          _token = null;
+          localStorage.removeItem("sas_token");
+          _connectAttemptsSinceSuccess = 0;
+        }
+
+        if (!_intentionalClose) {
+          _scheduleReconnect();
         }
       };
 
-      ws.onclose = () => {
-        emit("status", "reconnecting");
-        if (!isIntentionalClose) {
-          scheduleReconnect();
-        }
+      _ws.onerror = () => {
+        try { _ws.close(); } catch (_) { }
       };
-
-      ws.onerror = (e) => {
-        console.warn("[SAS] WebSocket error:", e);
-        try { ws.close(); } catch (_) {}
-      };
-    } catch (err) {
-      console.error("[SAS] WebSocket connection attempt threw:", err);
-      emit("status", "error");
-      scheduleReconnect();
+    } catch (_) {
+      _emit("status", "error");
+      _scheduleReconnect();
     }
   }
 
-  function scheduleReconnect() {
-    if (reconnectTimer) return;
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
+  function _scheduleReconnect() {
+    if (_reconnectTimer) return;
+    const jitter = Math.random() * 500;
+    _reconnectTimer = setTimeout(() => {
+      _reconnectTimer = null;
       connect();
-    }, backoff);
-    backoff = Math.min(backoff * 1.5, 12000);
+    }, _backoff + jitter);
+    _backoff = Math.min(_backoff * 1.5, 15000);
   }
 
   function disconnect() {
-    isIntentionalClose = true;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
+    _intentionalClose = true;
+    _stopHeartbeat();
+    if (_reconnectTimer) {
+      clearTimeout(_reconnectTimer);
+      _reconnectTimer = null;
     }
-    if (ws) {
-      try { ws.close(); } catch (_) {}
-      ws = null;
+    if (_ws) {
+      try { _ws.close(); } catch (_) { }
+      _ws = null;
     }
-    emit("status", "disconnected");
+    _emit("status", "disconnected");
   }
 
-  const send = (t, payload = {}) => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ t, ...payload }));
+  const _send = (t, payload = {}) => {
+    if (_ws && _ws.readyState === WebSocket.OPEN) {
+      _ws.send(JSON.stringify({ t, ...payload }));
       return true;
-    } else {
-      console.warn(`[SAS] Cannot send "${t}" — WebSocket not connected (readyState: ${ws ? ws.readyState : 'null'})`);
-      return false;
     }
+    return false;
   };
 
-  /* Where a client should project playback position right now */
   const projectedPosition = () => {
-    const np = latest.nowPlaying;
+    const np = _latest.nowPlaying;
     if (!np) return 0;
     if (!np.isPlaying) return np.positionSec || 0;
-    const elapsedSec = (Date.now() + serverSkew - (np.updatedAt || Date.now())) / 1000;
+    const elapsedSec = (Date.now() + _serverSkew - (np.updatedAt || Date.now())) / 1000;
     return Math.max(0, (np.positionSec || 0) + (elapsedSec > 0 && elapsedSec < 7200 ? elapsedSec : 0));
   };
 
-  const role = () => latest.you?.role ?? "pending";
-  const isHost = () => role() === "super_admin";
-  const canControl = () => ["super_admin", "admin"].includes(role());
+  const role = () => _currentRole;
+  const status = () => _currentStatus;
+  const isHost = () => _currentRole === "super_admin";
+  const canControl = () => ["super_admin", "admin"].includes(_currentRole) && _currentStatus !== "revoked";
 
-  return {
+  /* --- Public API surface ----------------------------------------- *
+   * IMPORTANT: Only expose methods that are safe for console access.  *
+   * Internal state (_token, _ws, passphrase) stays in IIFE closure.  *
+   * ---------------------------------------------------------------- */
+  const api = {
     ensureSession,
     elevate,
     connect,
     disconnect,
     on,
     off,
-    send,
+    send: _send,
     role,
+    status,
     isHost,
     canControl,
     projectedPosition,
-    getWorkerApi,
+    getWorkerApi: _getWorkerApi,
     setWorkerApi,
-    get state() { return latest; },
+    get state() {
+      try {
+        return structuredClone(_latest);
+      } catch (_) {
+        return Object.freeze({ ..._latest });
+      }
+    },
 
-    // Intent dispatchers
-    play:             () => send("play"),
-    pause:            () => send("pause"),
-    next:             () => send("next"),
-    prev:             () => send("prev"),
-    goto:             (index) => send("goto", { index }),
-    seek:             (positionSec) => send("seek", { positionSec }),
-    setVolume:        (value) => send("volume", { value }),
-    addTrack:         (videoId, title) => send("addTrack", { videoId, title }),
-    removeTrack:      (index) => send("removeTrack", { index }),
-    togglePin:        (index) => send("pin", { index }),
-    clearQueue:       () => send("clearQueue"),
-    loadDefaultQueue: () => send("loadDefaultQueue"),
-    setDeviceRole:    (deviceId, role, status) => send("setDeviceRole", { deviceId, role, status }),
-    removeDevice:     (deviceId) => send("removeDevice", { deviceId }),
-    requestAccess:    (name) => send("requestAccess", { name }),
-    hostTick:         (positionSec, durationSec = 0) => send("tick", { positionSec, durationSec }),
+    // Intent dispatchers — all validated server-side
+    play: () => _send("play"),
+    pause: () => _send("pause"),
+    next: () => _send("next"),
+    prev: () => _send("prev"),
+    goto: (index) => _send("goto", { index }),
+    seek: (positionSec) => _send("seek", { positionSec }),
+    setVolume: (value) => _send("volume", { value }),
+    addTrack: (videoId, title) => _send("addTrack", { videoId, title }),
+    removeTrack: (index) => _send("removeTrack", { index }),
+    togglePin: (index) => _send("pin", { index }),
+    clearQueue: () => _send("clearQueue"),
+    loadDefaultQueue: () => _send("loadDefaultQueue"),
+    setDeviceRole: (deviceId, role, status) => _send("setDeviceRole", { deviceId, role, status }),
+    removeDevice: (deviceId) => _send("removeDevice", { deviceId }),
+    requestAccess: (name) => _send("requestAccess", { name }),
+    hostTick: (positionSec, durationSec = 0) => _send("tick", { positionSec, durationSec }),
   };
+
+  return Object.freeze(api);
 })();

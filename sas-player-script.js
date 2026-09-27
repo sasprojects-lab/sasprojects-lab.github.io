@@ -1,7 +1,10 @@
 // =========================================================================
 //  SAS PLAYER — APP VERSION (Workers + Durable Objects Architecture)
 // =========================================================================
-const APP_VERSION = '4.0.2';
+const APP_VERSION = '4.2.0';
+
+(() => {
+  'use strict';
 
 // Default Studio Playlist Fallback
 const DEFAULT_TRACKS = [
@@ -340,13 +343,11 @@ function initYouTubePlayer() {
         'onStateChange': onPlayerStateChange,
         'onError': (e) => {
           isInitializingPlayer = false;
-          console.warn('[SAS Player] YT Player Error:', e.data);
         }
       }
     });
   } catch (err) {
     isInitializingPlayer = false;
-    console.warn('[SAS Player] Failed to create player:', err);
   }
 }
 
@@ -1294,7 +1295,7 @@ function getBrowserDeviceName() {
 }
 
 function getDeviceName() {
-  return localStorage.getItem('sas_device_name') || (isSuperAdmin ? 'Super Admin' : getBrowserDeviceName());
+  return localStorage.getItem('sas_device_name') || getBrowserDeviceName();
 }
 
 function renderAdminDeviceList(devices) {
@@ -1688,31 +1689,35 @@ async function promptAdminPassphrase() {
   try {
     const res = await SAS.elevate(entered.trim());
     if (res.ok) {
-      currentUserRole = res.role;
-      isAdmin = (res.role === 'admin' || res.role === 'super_admin');
-      isSuperAdmin = (res.role === 'super_admin');
-      deviceStatus = 'approved';
-
-      // Apply role class and update all UI
-      document.body.classList.remove('role-super_admin', 'role-admin', 'role-guest', 'role-pending');
-      document.body.classList.add(`role-${currentUserRole}`);
-      updateAccessUI('approved');
-      updateControlAccessUI();
-      applyRoleBasedVideoDisplay();
-
-      // If promoted to Super Admin, init YT player now
-      if (isSuperAdmin && !player && ytApiReady) {
-        initYouTubePlayer();
-      }
-
-      if (isSuperAdmin) {
-        showAdminPanelModal();
-      }
+      applyElevationResult(res.role);
     } else {
       alert(res.error ? `Authentication failed (${res.error}). Please check your passphrase.` : 'Invalid Passphrase.');
     }
   } catch (err) {
     alert('Connection error contacting Cloudflare Worker: ' + err.message);
+  }
+}
+
+function applyElevationResult(role) {
+  currentUserRole = role;
+  isAdmin = (role === 'admin' || role === 'super_admin');
+  isSuperAdmin = (role === 'super_admin');
+  deviceStatus = 'approved';
+
+  // Apply role class and update all UI
+  document.body.classList.remove('role-super_admin', 'role-admin', 'role-guest', 'role-pending');
+  document.body.classList.add(`role-${currentUserRole}`);
+  updateAccessUI('approved');
+  updateControlAccessUI();
+  applyRoleBasedVideoDisplay();
+
+  // If promoted to Super Admin, init YT player now
+  if (isSuperAdmin && !player && ytApiReady) {
+    initYouTubePlayer();
+  }
+
+  if (isSuperAdmin) {
+    showAdminPanelModal();
   }
 }
 
@@ -1741,6 +1746,9 @@ function closeAdminPanelOnBackdrop(e) {
 function logoutAdmin() {
   if (confirm('Are you sure you want to exit admin mode?')) {
     localStorage.removeItem('sas_token');
+    localStorage.removeItem('sas_role_hint');
+    localStorage.removeItem('sas_elev_cred');
+    localStorage.removeItem('sas_user_role');
     closeAdminPanel();
     location.reload();
   }
@@ -1847,8 +1855,8 @@ async function openMiniPlayer() {
     _pipWindow.document.getElementById('pip-play').onclick = toggleMainPlayback;
     _pipWindow.document.getElementById('pip-next').onclick = playNext;
     _pipWindow.document.getElementById('pip-prev').onclick = playPrev;
-  } catch (err) {
-    console.error('PiP Error:', err);
+  } catch (_) {
+    // PiP is non-fatal — silently swallow
   }
 }
 
@@ -1915,7 +1923,7 @@ function listenForSWUpdates() {
 
   navigator.serviceWorker.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'SW_UPDATED') {
-      console.log('[SAS SW] New service worker activated');
+      // New service worker activated — assets refreshed
     }
   });
 
@@ -1925,9 +1933,7 @@ function listenForSWUpdates() {
     if (registration.waiting) {
       registration.waiting.postMessage({ type: 'SKIP_WAITING' });
     }
-  }).catch((err) => {
-    console.warn('[SAS SW] Registration failed:', err);
-  });
+  }).catch(() => { });
 }
 
 // Drag & Drop Queue Reordering
@@ -2003,8 +2009,8 @@ async function boot() {
 
   try {
     await SAS.ensureSession(savedName);
-  } catch (err) {
-    console.warn('[SAS] Session prefetch note:', err.message);
+  } catch (_) {
+    // Session prefetch is best-effort — silently continue
   }
 
   SAS.connect();
@@ -2045,18 +2051,10 @@ function invalidateLegacyFirebaseVersions() {
       message: 'Upgraded to SAS Player v4.0.0 Cloudflare DO Architecture. Older Firebase versions invalidated.'
     })
   }).then(() => {
-    console.log('[SAS Invalidation] Legacy Firebase appVersion synchronized to v' + APP_VERSION);
-  }).catch((err) => {
-    console.warn('[SAS Invalidation] Legacy Firebase sync notice:', err);
+    // Silently synchronized — no console output
+  }).catch(() => {
+    // Non-critical — silently ignore
   });
-
-  // Clean up legacy Firebase cache/storage entries in the browser
-  try {
-    const legacyKeys = ['sas_player_cache', 'sas_device_status', 'sas_admin_pass'];
-    for (const key of legacyKeys) {
-      localStorage.removeItem(key);
-    }
-  } catch (e) { /* ignore */ }
 }
 
 // Handle unload/refresh for Super Admin host
@@ -2077,3 +2075,51 @@ window.addEventListener('pagehide', () => {
 });
 
 window.addEventListener('load', boot);
+
+  // Expose public action handlers for index.html onclick events
+  Object.assign(window, {
+    APP_VERSION,
+    addLink,
+    insertTrack,
+    toggleTheme,
+    openAccessModal,
+    closeAccessModal,
+    closeAccessModalOnBackdrop,
+    requestAccess,
+    openAdminPanel,
+    closeAdminPanel,
+    closeAdminPanelOnBackdrop,
+    openWorkerSettingsModal,
+    closeWorkerSettingsModal,
+    closeWorkerSettingsModalOnBackdrop,
+    saveWorkerSettings,
+    openMiniPlayer,
+    toggleMainPlayback,
+    playNext,
+    playPrev,
+    loadVideo,
+    togglePinTrack,
+    removeTrack,
+    clearAllTracks,
+    loadDefaultPlaylistAction,
+    clearPlayedTracks,
+    onMasterVolumeInput,
+    onMasterVolumeChange,
+    openRemotePanel,
+    minimizeRemotePanel,
+    clearAllOtherDevices,
+    logoutAdmin,
+    onYouTubeIframeAPIReady,
+  });
+
+  // Expose read-only security properties that cannot be tampered from DevTools console
+  try {
+    Object.defineProperties(window, {
+      currentUserRole: { get: () => currentUserRole, configurable: false },
+      isAdmin: { get: () => isAdmin, configurable: false },
+      isSuperAdmin: { get: () => isSuperAdmin, configurable: false },
+      deviceStatus: { get: () => deviceStatus, configurable: false },
+      deviceId: { get: () => deviceId, configurable: false },
+    });
+  } catch (_) { }
+})();
