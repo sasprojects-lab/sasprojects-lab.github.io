@@ -709,6 +709,17 @@ main.studio-master-grid {
   align-items: center;
   justify-content: center;
   width: 18px;
+  cursor: default;
+  user-select: none;
+}
+
+body.role-super_admin .track-num-drag,
+body.role-admin:not(.status-revoked) .track-num-drag {
+  cursor: grab;
+}
+
+body.role-super_admin .track-card,
+body.role-admin:not(.status-revoked) .track-card {
   cursor: grab;
 }
 

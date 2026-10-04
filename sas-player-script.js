@@ -670,9 +670,10 @@ async function hydrateVideoTitles() {
 function createTrackItem(link, index, isActive) {
   const div = document.createElement('div');
   const isAudioPlaying = disk && disk.classList.contains('playing');
+  const canDrag = isAuthorizedUser();
   div.className = `track-card ${isActive ? 'active-playing' : ''}`;
   div.dataset.trackIndex = index;
-  div.draggable = true;
+  div.draggable = canDrag;
 
   const addedBy = link.addedByName || 'Station';
   const isHost = addedBy.includes('Super Admin') || addedBy.includes('Host');
@@ -683,7 +684,7 @@ function createTrackItem(link, index, isActive) {
   const titleText = link.title || 'Loading track title...';
 
   div.innerHTML = `
-    <div class="track-num-drag">${index + 1}</div>
+    <div class="track-num-drag" title="${canDrag ? 'Drag to reorder' : 'Admin authorization required to reorder tracks'}">${index + 1}</div>
     <div class="micro-vinyl-disk ${isActive && isAudioPlaying ? 'spinning' : ''}">
       <div class="micro-vinyl-center-core"></div>
     </div>
@@ -1999,9 +2000,14 @@ function listenForSWUpdates() {
   }).catch(() => { });
 }
 
-// Drag & Drop Queue Reordering
+// Drag & Drop Queue Reordering (Authorized Super Admin & Admins Only)
 if (playlistContainer) {
   playlistContainer.addEventListener('dragstart', (event) => {
+    if (!isAuthorizedUser()) {
+      event.preventDefault();
+      showConnectionBadge('denied', 'Admin access required to reorder tracks');
+      return;
+    }
     const row = event.target.closest('.track-card[data-track-index]');
     if (!row) return;
     dragFromIndex = Number(row.dataset.trackIndex);
@@ -2009,7 +2015,7 @@ if (playlistContainer) {
   });
 
   playlistContainer.addEventListener('dragover', (event) => {
-    if (dragFromIndex < 0) return;
+    if (dragFromIndex < 0 || !isAuthorizedUser()) return;
     event.preventDefault();
     const row = event.target.closest('.track-card[data-track-index]');
     if (row) {
@@ -2031,9 +2037,16 @@ if (playlistContainer) {
     playlistContainer.querySelectorAll('.track-card.drag-over').forEach(el => el.classList.remove('drag-over'));
     if (!row) return;
     event.preventDefault();
+
+    if (!isAuthorizedUser()) {
+      dragFromIndex = -1;
+      showConnectionBadge('denied', 'Admin access required to reorder tracks');
+      return;
+    }
+
     const dropIndex = Number(row.dataset.trackIndex);
     if (dragFromIndex !== dropIndex) {
-      // Optimistic local reorder so UI reflects immediately without snap-back
+      // Optimistic local reorder for authorized users
       const moved = videoLinks[dragFromIndex];
       if (moved) {
         videoLinks.splice(dragFromIndex, 1);
@@ -2049,10 +2062,8 @@ if (playlistContainer) {
         updatePlaylistUI();
       }
 
-      if (isAuthorizedUser()) {
-        // Send reorder command to server — server is the single source of truth
-        SAS.moveTrack(dragFromIndex, dropIndex);
-      }
+      // Send reorder command to server — server is the single source of truth
+      SAS.moveTrack(dragFromIndex, dropIndex);
     }
     dragFromIndex = -1;
   });
