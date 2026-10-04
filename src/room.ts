@@ -3,6 +3,7 @@ import type { Env } from "./index";
 /* ------------------------------------------------------------------ *
  * One Durable Object = one room = the single source of truth.
  * Clients never write state. They send intents; this object decides.
+ * v4.3.0 — moveTrack reorder, grace-period disconnect, sequential add
  * ------------------------------------------------------------------ */
 
 export type Role = "super_admin" | "admin" | "guest" | "pending";
@@ -99,6 +100,8 @@ const PERMS: Record<Role, Set<string>> = {
   pending:     new Set([]),
 };
 
+const HOST_GRACE_PERIOD_MS = 60_000; // 60 seconds before auto-pausing on host disconnect
+
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 
 export class Room {
@@ -178,6 +181,10 @@ export class Room {
         this.state.devices[ident.sub].lastSeen = Date.now();
         // Update display name if user changed it
         if (ident.name) this.state.devices[ident.sub].name = ident.name;
+        // If authorized studio user connects, cancel any pending disconnect pause alarm
+        if (this.isStudioMember(ident.sub)) {
+          await this.ctx.storage.deleteAlarm();
+        }
         await this.save();
       }
 
@@ -258,6 +265,10 @@ export class Room {
       case "pause": {
         if (!can("transport")) return deny();
         const shouldPlay = msg.t === "play";
+        if (shouldPlay) {
+          // Playing actively — cancel any pending disconnect pause alarm
+          await this.ctx.storage.deleteAlarm();
+        }
         if (shouldPlay && this.state.nowPlaying.index === -1 && this.state.queue.length > 0) {
           this.setTrack(0, me.name, "Play");
         } else {
@@ -370,6 +381,40 @@ export class Room {
         break;
       }
 
+      case "addTracks": {
+        if (!can("add")) return deny();
+        const rawTracks = Array.isArray(msg.tracks) ? msg.tracks : [];
+        if (rawTracks.length === 0) return;
+        const wasEmpty = this.state.queue.length === 0;
+        let addedCount = 0;
+        let firstTitle = "";
+
+        for (const item of rawTracks) {
+          if (this.state.queue.length >= 300) break;
+          const id = String(item.videoId ?? "").trim();
+          if (!VIDEO_ID.test(id)) continue;
+          const title = String(item.title ?? "YouTube Track").slice(0, 160);
+          if (!firstTitle) firstTitle = title;
+          this.state.queue.push({
+            id,
+            title,
+            addedById: me.deviceId,
+            addedByName: me.name,
+            isPinned: false,
+          });
+          addedCount++;
+        }
+
+        if (addedCount > 0) {
+          const summary = addedCount === 1 ? `Added "${firstTitle}"` : `Added ${addedCount} tracks in bulk`;
+          this.log("add", me.name, summary);
+          if (wasEmpty || this.state.nowPlaying.index === -1) {
+            this.setTrack(0, me.name, null);
+          }
+        }
+        break;
+      }
+
       case "removeTrack": {
         if (!can("queue")) return deny();
         const i = Number(msg.index);
@@ -414,6 +459,35 @@ export class Room {
           volume: this.state.nowPlaying.volume,
         };
         this.log("clear", me.name, "Cleared master queue");
+        break;
+      }
+
+      case "moveTrack": {
+        if (!can("queue")) return deny();
+        const from = Number(msg.fromIndex);
+        const to = Number(msg.toIndex);
+        if (!Number.isInteger(from) || !Number.isInteger(to)) return deny();
+        if (from < 0 || from >= this.state.queue.length) return deny();
+        if (to < 0 || to >= this.state.queue.length) return deny();
+        if (from === to) return;
+
+        const [moved] = this.state.queue.splice(from, 1);
+        this.state.queue.splice(to, 0, moved);
+
+        // Adjust nowPlaying.index to follow the currently playing track
+        const cur = this.state.nowPlaying.index;
+        if (cur === from) {
+          this.state.nowPlaying.index = to;
+        } else if (from < cur && to >= cur) {
+          this.state.nowPlaying.index = cur - 1;
+        } else if (from > cur && to <= cur) {
+          this.state.nowPlaying.index = cur + 1;
+        }
+        // Update videoId to match
+        if (this.state.nowPlaying.index >= 0 && this.state.nowPlaying.index < this.state.queue.length) {
+          this.state.nowPlaying.videoId = this.state.queue[this.state.nowPlaying.index].id;
+        }
+        this.log("reorder", me.name, "Reordered playlist");
         break;
       }
 
@@ -482,23 +556,31 @@ export class Room {
     if (ident && this.state.devices[ident.sub]) {
       this.state.devices[ident.sub].lastSeen = Date.now();
 
-      // If Super Admin disconnected, check if another active Super Admin connection exists
-      if (this.state.devices[ident.sub].role === "super_admin") {
+      // If Super Admin disconnected, schedule a grace period before pausing.
+      // This prevents transient disconnects (tab sleep, hibernation, network blips,
+      // page refreshes) from permanently pausing playback for all admins.
+      if (this.state.devices[ident.sub].role === "super_admin" && this.state.nowPlaying.isPlaying) {
         const remainingSockets = this.ctx.getWebSockets();
         let hasActiveSuperAdmin = false;
+        let hasActiveAdmin = false;
         for (const s of remainingSockets) {
           if (s !== ws) {
             const att = s.deserializeAttachment() as { sub: string } | null;
-            if (att && this.state.devices[att.sub]?.role === "super_admin") {
-              hasActiveSuperAdmin = true;
-              break;
+            if (att) {
+              const r = this.state.devices[att.sub]?.role;
+              if (r === "super_admin") {
+                hasActiveSuperAdmin = true;
+                break;
+              } else if (r === "admin") {
+                hasActiveAdmin = true;
+              }
             }
           }
         }
-        if (!hasActiveSuperAdmin && this.state.nowPlaying.isPlaying) {
-          this.state.nowPlaying.isPlaying = false;
-          this.state.nowPlaying.updatedAt = Date.now();
-          this.log("pause", this.state.devices[ident.sub].name, "Host disconnected — playback paused");
+        // If there are still active Admins controlling the deck, don't pause.
+        // Only schedule an alarm if neither Super Admin nor Admins are connected.
+        if (!hasActiveSuperAdmin && !hasActiveAdmin) {
+          await this.ctx.storage.setAlarm(Date.now() + HOST_GRACE_PERIOD_MS);
         }
       }
 
@@ -510,6 +592,36 @@ export class Room {
   async webSocketError(ws: WebSocket) {
     // Treat errors same as close — update lastSeen and broadcast
     await this.webSocketClose(ws);
+  }
+
+  /** Alarm handler: fires after HOST_GRACE_PERIOD_MS if room is deserted */
+  async alarm() {
+    // Check again if a Super Admin or Admin socket reconnected during the grace period
+    const sockets = this.ctx.getWebSockets();
+    let hasActiveSuperAdmin = false;
+    let hasActiveAdmin = false;
+    for (const s of sockets) {
+      const att = s.deserializeAttachment() as { sub: string } | null;
+      if (att) {
+        const r = this.state.devices[att.sub]?.role;
+        if (r === "super_admin") {
+          hasActiveSuperAdmin = true;
+          break;
+        } else if (r === "admin") {
+          hasActiveAdmin = true;
+        }
+      }
+    }
+
+    if (!hasActiveSuperAdmin && !hasActiveAdmin && this.state.nowPlaying.isPlaying) {
+      this.state.nowPlaying.isPlaying = false;
+      this.state.nowPlaying.updatedAt = Date.now();
+      const superAdminDev = Object.values(this.state.devices).find(d => d.role === "super_admin");
+      const hostName = superAdminDev?.name || "Host";
+      this.log("pause", hostName, "Station idle — playback paused");
+      await this.save();
+      this.broadcastState();
+    }
   }
 
   /* ---------------- helpers ---------------- */

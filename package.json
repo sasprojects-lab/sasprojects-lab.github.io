@@ -1,6 +1,6 @@
 {
   "name": "sas-player",
-  "version": "4.2.0",
+  "version": "4.3.0",
   "description": "SAS Player - Realtime audio master deck powered by Cloudflare Workers and Durable Objects",
   "main": "src/index.ts",
   "scripts": {

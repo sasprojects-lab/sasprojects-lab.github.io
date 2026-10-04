@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------------ *
  * SAS realtime client — Cloudflare Workers + Durable Objects engine
- * v4.2.0 — Hardened: tamper-proof closure, frozen state, no leaks
+ * v4.3.0 — Hardened: tamper-proof closure, frozen state, no leaks
  * ------------------------------------------------------------------ */
 
 const SAS = (() => {
@@ -157,7 +157,7 @@ const SAS = (() => {
           _ws.send(JSON.stringify({ t: "ping" }));
         } catch (_) { }
       }
-    }, 30000);
+    }, 15000); // 15 seconds: keeps socket alive even under browser timer throttling
   }
 
   function _stopHeartbeat() {
@@ -219,13 +219,8 @@ const SAS = (() => {
         _stopHeartbeat();
         _emit("status", "reconnecting");
 
-        // If repeated rapid failures, token may be stale — clear and re-establish
-        if (!_intentionalClose && _connectAttemptsSinceSuccess > 2) {
-          _token = null;
-          localStorage.removeItem("sas_token");
-          _connectAttemptsSinceSuccess = 0;
-        }
-
+        // Never clear _token on transient network / background drops.
+        // The token is valid for 30 days and preserves device role identity.
         if (!_intentionalClose) {
           _scheduleReconnect();
         }
@@ -321,6 +316,7 @@ const SAS = (() => {
     seek: (positionSec) => _send("seek", { positionSec }),
     setVolume: (value) => _send("volume", { value }),
     addTrack: (videoId, title) => _send("addTrack", { videoId, title }),
+    addTracks: (tracks) => _send("addTracks", { tracks }),
     removeTrack: (index) => _send("removeTrack", { index }),
     togglePin: (index) => _send("pin", { index }),
     clearQueue: () => _send("clearQueue"),
@@ -328,8 +324,28 @@ const SAS = (() => {
     setDeviceRole: (deviceId, role, status) => _send("setDeviceRole", { deviceId, role, status }),
     removeDevice: (deviceId) => _send("removeDevice", { deviceId }),
     requestAccess: (name) => _send("requestAccess", { name }),
+    moveTrack: (fromIndex, toIndex) => _send("moveTrack", { fromIndex, toIndex }),
     hostTick: (positionSec, durationSec = 0) => _send("tick", { positionSec, durationSec }),
   };
+
+  // Immediate wake-up reconnect when user returns to tab or network recovers
+  if (typeof window !== "undefined") {
+    const _wakeUpCheck = () => {
+      if (!_ws || _ws.readyState === WebSocket.CLOSED || _ws.readyState === WebSocket.CLOSING) {
+        if (!_intentionalClose) {
+          _backoff = 1000;
+          connect();
+        }
+      } else if (_ws.readyState === WebSocket.OPEN) {
+        try { _ws.send(JSON.stringify({ t: "ping" })); } catch (_) { }
+      }
+    };
+    window.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") _wakeUpCheck();
+    });
+    window.addEventListener("focus", _wakeUpCheck);
+    window.addEventListener("online", _wakeUpCheck);
+  }
 
   return Object.freeze(api);
 })();

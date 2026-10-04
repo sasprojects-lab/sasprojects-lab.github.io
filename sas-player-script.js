@@ -1,7 +1,7 @@
 // =========================================================================
 //  SAS PLAYER — APP VERSION (Workers + Durable Objects Architecture)
 // =========================================================================
-const APP_VERSION = '4.2.0';
+const APP_VERSION = '4.3.0';
 
 (() => {
   'use strict';
@@ -122,6 +122,7 @@ const EVENT_ICONS = {
   add: { icon: 'fa-plus-circle', cls: 'type-add' },
   admin: { icon: 'fa-shield-alt', cls: 'type-admin' },
   clear: { icon: 'fa-trash-alt', cls: 'type-clear' },
+  reorder: { icon: 'fa-sort', cls: 'type-skip' },
   info: { icon: 'fa-bolt', cls: 'type-skip' }
 };
 
@@ -168,12 +169,17 @@ function formatActivityEventName(ev) {
     return detail;
   }
 
+  if (type === 'reorder') {
+    return 'Reordered Playlist';
+  }
+
   // Friendly type fallbacks
   const typeLabels = {
     volume: 'Volume Changed',
     add: 'Added Track',
     clear: 'Cleared Queue',
     pin: 'Pinned Track',
+    reorder: 'Reordered Playlist',
     admin: 'Role Updated',
     info: 'Connected to Station'
   };
@@ -394,10 +400,21 @@ function onPlayerStateChange(event) {
       }
       updatePlaybackUIState(true);
     } else if (event.data === YT.PlayerState.PAUSED) {
+      // If the station is currently in PLAYING state, a player pause event can be caused
+      // by browser background tab throttling, video buffering, or audio focus shifts.
+      // Attempt auto-recovery rather than immediately pausing the entire station.
       if (SAS.state?.nowPlaying?.isPlaying) {
-        SAS.pause();
+        setTimeout(() => {
+          if (isSuperAdmin && SAS.state?.nowPlaying?.isPlaying && player && typeof player.getPlayerState === 'function') {
+            const st = player.getPlayerState();
+            if (st === YT.PlayerState.PAUSED || st === YT.PlayerState.CUED) {
+              try { player.playVideo(); } catch (_) { }
+            }
+          }
+        }, 300);
+      } else {
+        updatePlaybackUIState(false);
       }
-      updatePlaybackUIState(false);
     }
   }
 
@@ -612,7 +629,12 @@ async function fetchVideoTitle(videoId) {
   if (!videoId) return '';
   if (titleCache[videoId]) return titleCache[videoId];
   try {
-    const response = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), 2000) : null;
+    const response = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`, {
+      signal: controller ? controller.signal : undefined
+    });
+    if (timeoutId) clearTimeout(timeoutId);
     if (!response.ok) return '';
     const data = await response.json();
     const title = data && data.title ? data.title.trim() : '';
@@ -955,52 +977,93 @@ function onMasterVolumeChange(slider) {
 
 // Add YouTube Link or Playlist
 function extractVideoID(url) {
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-  const match = url.match(regExp);
-  return (match && match[2].length === 11) ? match[2] : null;
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) return trimmed;
+  const regExp = /(?:youtu\.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([A-Za-z0-9_-]{11})/;
+  const match = trimmed.match(regExp);
+  return match ? match[1] : null;
 }
 
-function addLink() {
+function extractAllVideoIDs(text) {
+  if (!text) return [];
+  const ids = [];
+  const seen = new Set();
+  const trimmed = text.trim();
+
+  // If entire input is a single 11-char ID
+  if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) {
+    return [trimmed];
+  }
+
+  // Match all YouTube URLs including shorts, embeds, and standard watch URLs
+  const urlRegex = /(?:youtu\.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([A-Za-z0-9_-]{11})/g;
+  let match;
+  while ((match = urlRegex.exec(text)) !== null) {
+    const id = match[1];
+    if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+
+  // Also check whitespace/comma/newline separated tokens for raw IDs
+  const tokens = trimmed.split(/[\s,]+/).filter(Boolean);
+  for (const token of tokens) {
+    if (/^[A-Za-z0-9_-]{11}$/.test(token) && !seen.has(token)) {
+      seen.add(token);
+      ids.push(token);
+    }
+  }
+
+  return ids;
+}
+
+async function addLink() {
   const input = document.getElementById('link-input');
   if (!input) return;
   const raw = input.value.trim();
   if (!raw) return;
+  input.value = '';
 
-  const videoId = extractVideoID(raw);
-  if (!videoId) {
-    alert("Please enter a valid YouTube video URL.");
+  // Delegate to insertTrack which handles single or multiple URLs
+  await insertTrack(raw);
+}
+
+async function insertTrack(rawInput) {
+  if (!rawInput) return;
+  const validTracks = extractAllVideoIDs(rawInput);
+
+  if (validTracks.length === 0) {
+    alert("No valid YouTube video URLs found.");
     return;
   }
 
-  // Fetch title in background then add
-  fetchVideoTitle(videoId).then((title) => {
+  // If authorized and multiple tracks, use server-side bulk addTracks for atomic ordering
+  if (isAuthorizedUser() && typeof SAS.addTracks === 'function' && validTracks.length > 1) {
+    const batch = validTracks.map(id => ({
+      videoId: id,
+      title: titleCache[id] || "YouTube Track"
+    }));
+    SAS.addTracks(batch);
+    // Background title hydration will update any placeholder titles
+    return;
+  }
+
+  // Process sequentially to preserve order
+  for (const videoId of validTracks) {
+    const title = await fetchVideoTitle(videoId);
     const trackTitle = title || "YouTube Track";
     if (!isAuthorizedUser()) {
       addLocalTrack(videoId, trackTitle);
     } else {
       SAS.addTrack(videoId, trackTitle);
     }
-  });
-
-  input.value = '';
-}
-
-function insertTrack(rawInput) {
-  if (!rawInput) return;
-  const urls = rawInput.trim().split(/\s+/).filter(Boolean);
-  urls.forEach((url) => {
-    const videoId = extractVideoID(url);
-    if (videoId) {
-      fetchVideoTitle(videoId).then((title) => {
-        const trackTitle = title || "YouTube Track";
-        if (!isAuthorizedUser()) {
-          addLocalTrack(videoId, trackTitle);
-        } else {
-          SAS.addTrack(videoId, trackTitle);
-        }
-      });
+    // Small delay between adds to ensure server processes them in order
+    if (validTracks.length > 1) {
+      await wait(80);
     }
-  });
+  }
 }
 
 // YouTube Player Sync Logic (Called on every server state frame)
@@ -1948,22 +2011,57 @@ if (playlistContainer) {
   playlistContainer.addEventListener('dragover', (event) => {
     if (dragFromIndex < 0) return;
     event.preventDefault();
+    const row = event.target.closest('.track-card[data-track-index]');
+    if (row) {
+      playlistContainer.querySelectorAll('.track-card.drag-over').forEach(el => {
+        if (el !== row) el.classList.remove('drag-over');
+      });
+      row.classList.add('drag-over');
+    }
+  });
+
+  playlistContainer.addEventListener('dragleave', (event) => {
+    const row = event.target.closest('.track-card[data-track-index]');
+    if (row) row.classList.remove('drag-over');
   });
 
   playlistContainer.addEventListener('drop', (event) => {
     if (dragFromIndex < 0) return;
     const row = event.target.closest('.track-card[data-track-index]');
+    playlistContainer.querySelectorAll('.track-card.drag-over').forEach(el => el.classList.remove('drag-over'));
     if (!row) return;
     event.preventDefault();
     const dropIndex = Number(row.dataset.trackIndex);
-    if (dragFromIndex !== dropIndex && isAuthorizedUser()) {
+    if (dragFromIndex !== dropIndex) {
+      // Optimistic local reorder so UI reflects immediately without snap-back
       const moved = videoLinks[dragFromIndex];
-      videoLinks.splice(dragFromIndex, 1);
-      videoLinks.splice(dropIndex, 0, moved);
-      initPlaylist();
-      updatePlaylistUI();
+      if (moved) {
+        videoLinks.splice(dragFromIndex, 1);
+        videoLinks.splice(dropIndex, 0, moved);
+        if (currentIndex === dragFromIndex) {
+          currentIndex = dropIndex;
+        } else if (dragFromIndex < currentIndex && dropIndex >= currentIndex) {
+          currentIndex--;
+        } else if (dragFromIndex > currentIndex && dropIndex <= currentIndex) {
+          currentIndex++;
+        }
+        initPlaylist();
+        updatePlaylistUI();
+      }
+
+      if (isAuthorizedUser()) {
+        // Send reorder command to server — server is the single source of truth
+        SAS.moveTrack(dragFromIndex, dropIndex);
+      }
     }
     dragFromIndex = -1;
+  });
+
+  playlistContainer.addEventListener('dragend', () => {
+    dragFromIndex = -1;
+    playlistContainer.querySelectorAll('.track-card').forEach(el => {
+      el.classList.remove('dragging', 'drag-over');
+    });
   });
 }
 
@@ -2035,6 +2133,29 @@ async function boot() {
     }
   });
 
+  // Navbar search-wrapper input Enter key listener
+  const linkInput = document.getElementById('link-input');
+  if (linkInput) {
+    linkInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        addLink();
+      }
+    });
+  }
+
+  // Auto-recovery for Super Admin playback when tab becomes visible
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      if (isSuperAdmin && SAS.state?.nowPlaying?.isPlaying && player && typeof player.getPlayerState === 'function') {
+        const st = player.getPlayerState();
+        if (st !== YT.PlayerState.PLAYING && st !== YT.PlayerState.BUFFERING) {
+          try { player.playVideo(); } catch (_) { }
+        }
+      }
+    }
+  });
+
   // Legacy Firebase Invalidation & Storage Cleanup
   invalidateLegacyFirebaseVersions();
 }
@@ -2057,22 +2178,9 @@ function invalidateLegacyFirebaseVersions() {
   });
 }
 
-// Handle unload/refresh for Super Admin host
-window.addEventListener('beforeunload', () => {
-  if (isSuperAdmin && SAS.state?.nowPlaying?.isPlaying) {
-    try {
-      SAS.pause();
-    } catch (_) { }
-  }
-});
-
-window.addEventListener('pagehide', () => {
-  if (isSuperAdmin && SAS.state?.nowPlaying?.isPlaying) {
-    try {
-      SAS.pause();
-    } catch (_) { }
-  }
-});
+// Super Admin: no longer auto-pausing on beforeunload/pagehide.
+// The server-side Durable Object now uses a 30-second grace period alarm.
+// This prevents F5 refreshes and brief tab switches from pausing playback globally.
 
 window.addEventListener('load', boot);
 
