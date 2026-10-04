@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------------ *
  * SAS realtime client — Cloudflare Workers + Durable Objects engine
- * v4.3.0 — Hardened: tamper-proof closure, frozen state, no leaks
+ * v4.3.1 — Hardened: tamper-proof closure, frozen state, no leaks
  * ------------------------------------------------------------------ */
 
 const SAS = (() => {

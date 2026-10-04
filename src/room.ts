@@ -3,7 +3,7 @@ import type { Env } from "./index";
 /* ------------------------------------------------------------------ *
  * One Durable Object = one room = the single source of truth.
  * Clients never write state. They send intents; this object decides.
- * v4.3.0 — moveTrack reorder, grace-period disconnect, sequential add
+ * v4.3.1 — moveTrack reorder, grace-period disconnect, sequential add
  * ------------------------------------------------------------------ */
 
 export type Role = "super_admin" | "admin" | "guest" | "pending";

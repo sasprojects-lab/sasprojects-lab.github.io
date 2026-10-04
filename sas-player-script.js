@@ -1,7 +1,7 @@
 // =========================================================================
 //  SAS PLAYER — APP VERSION (Workers + Durable Objects Architecture)
 // =========================================================================
-const APP_VERSION = '4.3.0';
+const APP_VERSION = '4.3.1';
 
 (() => {
   'use strict';
