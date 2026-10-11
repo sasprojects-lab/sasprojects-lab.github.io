@@ -1519,7 +1519,8 @@ body.role-admin:not(.status-revoked) .track-card {
   border: 1px solid rgba(241, 196, 15, 0.3);
 }
 
-.event-icon-box.type-skip {
+.event-icon-box.type-skip,
+.event-icon-box.type-seek {
   background: rgba(0, 242, 254, 0.15);
   color: var(--accent-cyan);
   border: 1px solid rgba(0, 242, 254, 0.3);
@@ -2552,19 +2553,34 @@ body.is-playing .thumbnail-overlay img {
   color: var(--text-muted, #666);
 }
 
-/* Live Track Progress Overlay on Thumbnail for Admins and Guests */
+/* Seekable Track Progress Overlay — direct child of #player-container
+   Sits above both YT iframe and thumbnail-overlay. Hidden by default,
+   shown only for super_admin / admin via the .seekable class toggled in JS. */
 .thumb-progress-overlay {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 24px 18px 14px 18px;
-  background: linear-gradient(180deg, transparent, rgba(5, 5, 10, 0.72) 50%, rgba(5, 5, 10, 0.92));
-  pointer-events: none;
-  display: flex;
+  padding: 0 18px 10px 18px;
+  background: linear-gradient(180deg, transparent 0%, rgba(5, 5, 10, 0.55) 40%, rgba(5, 5, 10, 0.88) 100%);
+  display: none;              /* hidden by default; .seekable shows it */
   flex-direction: column;
   gap: 6px;
-  z-index: 5;
+  z-index: 15;                /* above thumbnail-overlay (z:10) and YT iframe */
+  pointer-events: none;
+}
+
+/* Visible + interactive only for authorized roles */
+.thumb-progress-overlay.seekable {
+  display: flex;
+  pointer-events: auto;
+}
+
+/* Expanded invisible hit area (30px tall) so the user doesn't need pixel-perfect aim */
+.thumb-progress-hitarea {
+  position: relative;
+  padding: 14px 0;
+  cursor: pointer;
 }
 
 .thumb-progress-track {
@@ -2572,6 +2588,31 @@ body.is-playing .thumbnail-overlay img {
   height: 4px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.22);
+  transition: height 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* YouTube-style expand on hover / scrubbing */
+.thumb-progress-overlay.seekable:hover .thumb-progress-track,
+.thumb-progress-overlay.scrubbing .thumb-progress-track {
+  height: 7px;
+}
+
+/* Hover fill preview (grey ghost bar showing where you'd seek to) */
+.thumb-progress-hover-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 0%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.thumb-progress-overlay.seekable:hover .thumb-progress-hover-fill,
+.thumb-progress-overlay.scrubbing .thumb-progress-hover-fill {
+  opacity: 1;
 }
 
 .thumb-progress-fill {
@@ -2583,6 +2624,13 @@ body.is-playing .thumbnail-overlay img {
   border-radius: 999px;
   background: linear-gradient(90deg, #00f2fe, #ffd700);
   transition: width 0.5s linear;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Disable the smooth transition while actively scrubbing */
+.thumb-progress-overlay.scrubbing .thumb-progress-fill {
+  transition: none;
 }
 
 .thumb-progress-fill::after {
@@ -2596,6 +2644,61 @@ body.is-playing .thumbnail-overlay img {
   border-radius: 50%;
   transform: translateY(-50%);
   box-shadow: 0 0 8px rgba(255, 215, 0, 0.85);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.thumb-progress-overlay.seekable:hover .thumb-progress-fill::after,
+.thumb-progress-overlay.scrubbing .thumb-progress-fill::after {
+  opacity: 1;
+}
+
+/* Scrub handle — larger drag knob, visible on hover */
+.thumb-progress-handle {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  width: 14px;
+  height: 14px;
+  background: #ffd700;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 10px rgba(255, 215, 0, 0.9), 0 0 20px rgba(255, 215, 0, 0.4);
+  z-index: 3;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.thumb-progress-overlay.seekable:hover .thumb-progress-handle,
+.thumb-progress-overlay.scrubbing .thumb-progress-handle {
+  opacity: 1;
+}
+.thumb-progress-overlay.scrubbing .thumb-progress-handle {
+  transform: translate(-50%, -50%) scale(1.3);
+}
+
+/* Hover tooltip showing the time at cursor position */
+.thumb-progress-tooltip {
+  position: absolute;
+  bottom: 46px;
+  left: 18px;
+  transform: translateX(0%);
+  background: rgba(20, 20, 28, 0.92);
+  color: #f2f0ea;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 4;
+  transition: opacity 0.12s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+}
+.thumb-progress-overlay.seekable:hover .thumb-progress-tooltip,
+.thumb-progress-overlay.scrubbing .thumb-progress-tooltip {
+  opacity: 1;
 }
 
 .thumb-progress-labels {

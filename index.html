@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="sas-player-styles.css?v=4.3.1">
+  <link rel="stylesheet" href="sas-player-styles.css?v=4.3.5">
 </head>
 
 <body>
@@ -38,7 +38,7 @@
         <span class="status-pulse-dot"></span>
         <span id="telemetry-status-text">DO: Connecting...</span>
       </div>
-      <span class="app-version-badge" id="app-version-badge" title="App Version">v4.3.1</span>
+      <span class="app-version-badge" id="app-version-badge" title="App Version">v4.3.5</span>
     </div>
 
     <!-- Center Search & Command Input -->
@@ -136,15 +136,20 @@
               <i class="fas fa-headphones"></i>
               <span>Listening Mode</span>
             </div> -->
-            <!-- Live Track Progress Overlay for Thumbnail Viewers -->
-            <div class="thumb-progress-overlay">
-              <div class="thumb-progress-track">
+          </div>
+          <!-- Seekable Progress Bar — sits above YT player + thumbnail for Admin/Super Admin -->
+          <div class="thumb-progress-overlay" id="thumb-progress-overlay">
+            <div class="thumb-progress-hitarea" id="thumb-progress-hitarea">
+              <div class="thumb-progress-track" id="thumb-progress-track">
+                <div class="thumb-progress-hover-fill" id="thumb-progress-hover-fill"></div>
                 <div class="thumb-progress-fill" id="thumb-progress-fill"></div>
+                <div class="thumb-progress-handle" id="thumb-progress-handle"></div>
               </div>
-              <div class="thumb-progress-labels">
-                <span id="thumb-progress-current">0:00</span>
-                <span id="thumb-progress-duration">--:--</span>
-              </div>
+            </div>
+            <div class="thumb-progress-tooltip" id="thumb-progress-tooltip">0:00</div>
+            <div class="thumb-progress-labels">
+              <span id="thumb-progress-current">0:00</span>
+              <span id="thumb-progress-duration">--:--</span>
             </div>
           </div>
         </div>
@@ -452,8 +457,8 @@
   </div>
 
   <script src="https://www.youtube.com/iframe_api"></script>
-  <script src="sas-realtime.min.js?v=4.3.1"></script>
-  <script src="sas-player-script.min.js?v=4.3.1"></script>
+  <script src="sas-realtime.min.js?v=4.3.5"></script>
+  <script src="sas-player-script.min.js?v=4.3.5"></script>
 </body>
 
 </html>

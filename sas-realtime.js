@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------------ *
  * SAS realtime client — Cloudflare Workers + Durable Objects engine
- * v4.3.1 — Hardened: tamper-proof closure, frozen state, no leaks
+ * v4.3.5 — Hardened: tamper-proof closure, frozen state, no leaks
  * ------------------------------------------------------------------ */
 
 const SAS = (() => {
@@ -18,6 +18,7 @@ const SAS = (() => {
   const _handlers = {
     state: [],
     tick: [],
+    seek: [],
     denied: [],
     status: []
   };
@@ -207,7 +208,23 @@ const SAS = (() => {
             }
             _emit("state", msg);
           } else if (msg.t === "tick") {
+            if (_latest?.nowPlaying) {
+              _latest.nowPlaying.positionSec = msg.positionSec;
+              _latest.nowPlaying.updatedAt = msg.at || Date.now();
+              if (typeof msg.durationSec === "number" && msg.durationSec > 0) {
+                _latest.nowPlaying.durationSec = msg.durationSec;
+              }
+            }
             _emit("tick", msg);
+          } else if (msg.t === "seek") {
+            if (_latest?.nowPlaying) {
+              _latest.nowPlaying.positionSec = msg.positionSec;
+              _latest.nowPlaying.updatedAt = msg.at || Date.now();
+              if (typeof msg.durationSec === "number" && msg.durationSec > 0) {
+                _latest.nowPlaying.durationSec = msg.durationSec;
+              }
+            }
+            _emit("seek", msg);
           } else if (msg.t === "denied") {
             _emit("denied", msg.action);
           }
@@ -313,7 +330,14 @@ const SAS = (() => {
     next: () => _send("next"),
     prev: () => _send("prev"),
     goto: (index) => _send("goto", { index }),
-    seek: (positionSec) => _send("seek", { positionSec }),
+    seek: (positionSec) => {
+      const pos = Number(positionSec);
+      if (Number.isFinite(pos) && pos >= 0 && _latest?.nowPlaying) {
+        _latest.nowPlaying.positionSec = pos;
+        _latest.nowPlaying.updatedAt = Date.now();
+      }
+      return _send("seek", { positionSec: pos });
+    },
     setVolume: (value) => _send("volume", { value }),
     addTrack: (videoId, title) => _send("addTrack", { videoId, title }),
     addTracks: (tracks) => _send("addTracks", { tracks }),

@@ -3,7 +3,7 @@ import type { Env } from "./index";
 /* ------------------------------------------------------------------ *
  * One Durable Object = one room = the single source of truth.
  * Clients never write state. They send intents; this object decides.
- * v4.3.1 — moveTrack reorder, grace-period disconnect, sequential add
+ * v4.3.5 — seek stability, no loop ticks, pause/play harmony
  * ------------------------------------------------------------------ */
 
 export type Role = "super_admin" | "admin" | "guest" | "pending";
@@ -106,6 +106,7 @@ const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 
 export class Room {
   private state!: RoomState;
+  private lastSeekAt = 0;
 
   constructor(private ctx: DurableObjectState, private env: Env) {
     ctx.blockConcurrencyWhile(async () => {
@@ -285,6 +286,35 @@ export class Room {
         if (!Number.isFinite(pos) || pos < 0) return deny();
         this.state.nowPlaying.positionSec = pos;
         this.state.nowPlaying.updatedAt = Date.now();
+        this.lastSeekAt = Date.now();
+
+        let evId: string;
+        const recentSeekLog = this.state.activity.find(
+          (a) => a.type === "seek" && a.actorName === me.name && (Date.now() - a.at < 3000)
+        );
+        if (recentSeekLog) {
+          recentSeekLog.at = Date.now();
+          evId = recentSeekLog.id;
+        } else {
+          evId = crypto.randomUUID();
+          this.state.activity.unshift({
+            id: evId,
+            type: "seek",
+            actorName: me.name,
+            detail: "Seeked Track",
+            at: Date.now(),
+          });
+          this.state.activity = this.state.activity.slice(0, 40);
+        }
+
+        this.broadcast({
+          t: "seek",
+          eventId: evId,
+          actorName: me.name,
+          positionSec: pos,
+          durationSec: this.state.nowPlaying.durationSec || 0,
+          at: Date.now()
+        }, /* onlyAuthorized= */ true);
         break;
       }
 
@@ -338,13 +368,20 @@ export class Room {
       case "tick": {
         if (!can("host")) return;                     // silent: high frequency
         const pos = Number(msg.positionSec);
+        const isRecentSeek = (Date.now() - this.lastSeekAt) < 3000;
         if (Number.isFinite(pos)) {
-          this.state.nowPlaying.positionSec = pos;
-          this.state.nowPlaying.updatedAt = Date.now();
+          // If a seek happened in the last 3.0s, ignore stale ticks from host before seek applied
+          if (!isRecentSeek || Math.abs(pos - this.state.nowPlaying.positionSec) < 1.5) {
+            this.state.nowPlaying.positionSec = pos;
+            this.state.nowPlaying.updatedAt = Date.now();
+          }
         }
         const dur = Number(msg.durationSec);
         if (Number.isFinite(dur) && dur > 0) {
           this.state.nowPlaying.durationSec = dur;
+        }
+        if (isRecentSeek && Math.abs(pos - this.state.nowPlaying.positionSec) >= 1.5) {
+          return;                                     // suppress stale tick broadcast during seek transition
         }
         this.broadcast({
           t: "tick",

@@ -1,7 +1,7 @@
 // =========================================================================
 //  SAS PLAYER — APP VERSION (Workers + Durable Objects Architecture)
 // =========================================================================
-const APP_VERSION = '4.3.1';
+const APP_VERSION = '4.3.5';
 
 (() => {
   'use strict';
@@ -122,6 +122,7 @@ const EVENT_ICONS = {
   add: { icon: 'fa-plus-circle', cls: 'type-add' },
   admin: { icon: 'fa-shield-alt', cls: 'type-admin' },
   clear: { icon: 'fa-trash-alt', cls: 'type-clear' },
+  seek: { icon: 'fa-history', cls: 'type-seek' },
   reorder: { icon: 'fa-sort', cls: 'type-skip' },
   info: { icon: 'fa-bolt', cls: 'type-skip' }
 };
@@ -260,8 +261,13 @@ function buildActivityCard(ev) {
   return card;
 }
 
+let _lastSeekToastAt = 0;
 function showEventToast(ev) {
   if (!isAuthorizedUser()) return; // Never show floating broadcast toasts to guests
+  if (ev && ev.type === 'seek') {
+    if (Date.now() - _lastSeekToastAt < 3000) return;
+    _lastSeekToastAt = Date.now();
+  }
   const hub = document.getElementById('event-toast-hub');
   if (!hub) return;
 
@@ -385,36 +391,21 @@ function onPlayerReady() {
 function onPlayerStateChange(event) {
   const isPlaying = (event.data === YT.PlayerState.PLAYING);
 
-  // Expected playback state for background recovery
-  if (isPlaying) {
-    expectedPlaybackState = 'playing';
-  } else if (event.data === YT.PlayerState.PAUSED) {
-    expectedPlaybackState = 'paused';
-  }
-
   // Synchronize Super Admin host player state with the room and UI
   if (isSuperAdmin) {
     if (isPlaying) {
+      expectedPlaybackState = 'playing';
       if (SAS.state?.nowPlaying && !SAS.state.nowPlaying.isPlaying) {
         SAS.play();
       }
       updatePlaybackUIState(true);
     } else if (event.data === YT.PlayerState.PAUSED) {
-      // If the station is currently in PLAYING state, a player pause event can be caused
-      // by browser background tab throttling, video buffering, or audio focus shifts.
-      // Attempt auto-recovery rather than immediately pausing the entire station.
+      expectedPlaybackState = 'paused';
       if (SAS.state?.nowPlaying?.isPlaying) {
-        setTimeout(() => {
-          if (isSuperAdmin && SAS.state?.nowPlaying?.isPlaying && player && typeof player.getPlayerState === 'function') {
-            const st = player.getPlayerState();
-            if (st === YT.PlayerState.PAUSED || st === YT.PlayerState.CUED) {
-              try { player.playVideo(); } catch (_) { }
-            }
-          }
-        }, 300);
-      } else {
-        updatePlaybackUIState(false);
+        // Host player was paused locally (e.g. user clicked native YouTube pause)
+        SAS.pause();
       }
+      updatePlaybackUIState(false);
     }
   }
 
@@ -483,15 +474,155 @@ function updateTrackTimerDisplay() {
   if (durEl) durEl.textContent = duration > 0 ? formatTime(duration) : '--:--';
 
   // Mirror onto thumbnail overlay progress bar for Admins and guests
-  const thumbFill = document.getElementById('thumb-progress-fill');
-  const thumbCur = document.getElementById('thumb-progress-current');
-  const thumbDur = document.getElementById('thumb-progress-duration');
-  if (thumbFill) {
-    const pct = duration > 0 ? Math.min(100, Math.max(0, (current / duration) * 100)) : 0;
-    thumbFill.style.width = pct + '%';
+  // Skip updates while the user is actively scrubbing to avoid visual fighting
+  if (!_thumbScrubbing) {
+    const thumbFill = document.getElementById('thumb-progress-fill');
+    const thumbHandle = document.getElementById('thumb-progress-handle');
+    const thumbCur = document.getElementById('thumb-progress-current');
+    const thumbDur = document.getElementById('thumb-progress-duration');
+    if (thumbFill) {
+      const pct = duration > 0 ? Math.min(100, Math.max(0, (current / duration) * 100)) : 0;
+      thumbFill.style.width = pct + '%';
+      if (thumbHandle) thumbHandle.style.left = pct + '%';
+    }
+    if (thumbCur) thumbCur.textContent = formatTime(current);
+    if (thumbDur) thumbDur.textContent = duration > 0 ? formatTime(duration) : '--:--';
   }
-  if (thumbCur) thumbCur.textContent = formatTime(current);
-  if (thumbDur) thumbDur.textContent = duration > 0 ? formatTime(duration) : '--:--';
+}
+
+// =========================================================================
+//  Thumbnail Progress Bar — YouTube-style Scrubber (Admin / Super Admin)
+// =========================================================================
+let _thumbScrubbing = false;
+
+function initThumbProgressScrubber() {
+  const overlay = document.getElementById('thumb-progress-overlay');
+  const hitarea = document.getElementById('thumb-progress-hitarea');
+  const track = document.getElementById('thumb-progress-track');
+  const fill = document.getElementById('thumb-progress-fill');
+  const handle = document.getElementById('thumb-progress-handle');
+  const hoverFill = document.getElementById('thumb-progress-hover-fill');
+  const tooltip = document.getElementById('thumb-progress-tooltip');
+  if (!overlay || !hitarea || !track || !fill) return;
+
+  // Helper: compute seek fraction from a pointer event relative to the track
+  function pctFromEvent(e) {
+    const rect = track.getBoundingClientRect();
+    const touch = e.touches?.[0] || e.changedTouches?.[0];
+    const clientX = touch ? touch.clientX : e.clientX;
+    return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  }
+
+  // Helper: get the current duration from the server state
+  function getDuration() {
+    if (player && typeof player.getDuration === 'function') {
+      const d = player.getDuration();
+      if (d > 0) return d;
+    }
+    return serverDuration || SAS.state?.nowPlaying?.durationSec || 0;
+  }
+
+  // Helper: position tooltip horizontally relative to the overlay
+  function positionTooltip(frac) {
+    if (!tooltip) return;
+    const trackRect = track.getBoundingClientRect();
+    const overlayRect = overlay.getBoundingClientRect();
+    const px = trackRect.left + (frac * trackRect.width) - overlayRect.left;
+    tooltip.style.left = px + 'px';
+    tooltip.style.transform = 'translateX(-50%)';
+  }
+
+  // Helper: apply visual position at a given fraction
+  function applyVisualPosition(frac) {
+    const pct = frac * 100;
+    fill.style.width = pct + '%';
+    if (handle) handle.style.left = pct + '%';
+    const curEl = document.getElementById('thumb-progress-current');
+    if (curEl) curEl.textContent = formatTime(frac * getDuration());
+  }
+
+  // --- Hover: show tooltip + ghost fill ---
+  hitarea.addEventListener('mousemove', (e) => {
+    if (_thumbScrubbing) return;
+    const frac = pctFromEvent(e);
+    if (hoverFill) hoverFill.style.width = (frac * 100) + '%';
+    if (tooltip) {
+      tooltip.textContent = formatTime(frac * getDuration());
+      positionTooltip(frac);
+    }
+  });
+
+  hitarea.addEventListener('mouseleave', () => {
+    if (_thumbScrubbing) return;
+    if (hoverFill) hoverFill.style.width = '0%';
+  });
+
+  // --- Drag / Scrub (mouse + touch) ---
+  function startScrub(e) {
+    e.preventDefault();
+    _thumbScrubbing = true;
+    overlay.classList.add('scrubbing');
+    moveScrub(e);
+    if (e.type === 'touchstart') {
+      document.addEventListener('touchmove', moveScrub, { passive: false });
+      document.addEventListener('touchend', endScrub);
+      document.addEventListener('touchcancel', endScrub);
+    } else {
+      document.addEventListener('mousemove', moveScrub);
+      document.addEventListener('mouseup', endScrub);
+    }
+  }
+
+  function moveScrub(e) {
+    if (!_thumbScrubbing) return;
+    if (e.cancelable) e.preventDefault();
+    const frac = pctFromEvent(e);
+    applyVisualPosition(frac);
+    if (hoverFill) hoverFill.style.width = (frac * 100) + '%';
+    if (tooltip) {
+      tooltip.textContent = formatTime(frac * getDuration());
+      positionTooltip(frac);
+    }
+  }
+
+  function endScrub(e) {
+    if (!_thumbScrubbing) return;
+    const frac = pctFromEvent(e);
+    const dur = getDuration();
+    _thumbScrubbing = false;
+    overlay.classList.remove('scrubbing');
+
+    document.removeEventListener('mousemove', moveScrub);
+    document.removeEventListener('mouseup', endScrub);
+    document.removeEventListener('touchmove', moveScrub);
+    document.removeEventListener('touchend', endScrub);
+    document.removeEventListener('touchcancel', endScrub);
+
+    if (dur > 0) {
+      performSeek(frac * dur);
+    }
+  }
+
+  hitarea.addEventListener('mousedown', startScrub);
+  hitarea.addEventListener('touchstart', startScrub, { passive: false });
+}
+
+// Perform a seek: for Super Admin it seeks the local YT player + broadcasts;
+// for Admin it sends a seek command to the server.
+function performSeek(positionSec) {
+  const exactPos = Math.max(0, Math.round(positionSec * 10) / 10);
+  _hostSeekCooldownUntil = Date.now() + 3000;
+  _lastHostReportedSec = exactPos;
+
+  if (isSuperAdmin || !isAuthorizedUser()) {
+    if (player && isPlayerReady && typeof player.seekTo === 'function') {
+      try { player.seekTo(exactPos, true); } catch (_) { }
+    }
+  }
+  if (isAuthorizedUser() && typeof SAS.seek === 'function') {
+    SAS.seek(exactPos);
+  }
+  updateTrackTimerDisplay();
 }
 
 // Master Playback State Synchronizer for All UI Controls
@@ -767,8 +898,16 @@ function toggleMainPlayback() {
     : (np && np.isPlaying);
 
   if (isActuallyPlaying) {
+    expectedPlaybackState = 'paused';
+    if (isSuperAdmin && player && typeof player.pauseVideo === 'function') {
+      try { player.pauseVideo(); } catch (_) { }
+    }
     SAS.pause();
   } else {
+    expectedPlaybackState = 'playing';
+    if (isSuperAdmin && player && typeof player.playVideo === 'function') {
+      try { player.playVideo(); } catch (_) { }
+    }
     SAS.play();
   }
 }
@@ -1145,6 +1284,16 @@ function applyRoleBasedVideoDisplay() {
   const overlay = document.getElementById('thumbnail-overlay');
   const ytFrame = document.getElementById('yt-iframe');
   const badge = document.getElementById('thumbnail-role-badge');
+  const progressOverlay = document.getElementById('thumb-progress-overlay');
+
+  // Toggle seekable class on the progress overlay based on role
+  if (progressOverlay) {
+    if (isSuperAdmin || (isAdmin && deviceStatus !== 'revoked')) {
+      progressOverlay.classList.add('seekable');
+    } else {
+      progressOverlay.classList.remove('seekable');
+    }
+  }
 
   if (isSuperAdmin || currentUserRole === 'guest') {
     // Super Admin & Guest: show live YT player, hide thumbnail, show timer in deck-top-row
@@ -1197,19 +1346,81 @@ function onServerTick({ positionSec, durationSec }) {
   if (typeof durationSec === 'number' && durationSec > 0) {
     serverDuration = durationSec;
   }
-  if (isSuperAdmin || !player || !isPlayerReady || typeof player.getCurrentTime !== 'function') return;
-  const current = player.getCurrentTime();
-  if (Math.abs(current - positionSec) > 1.5) {
-    player.seekTo(positionSec, true);
+  // Admin devices mirror host deck position and duration
+  if (!isSuperAdmin) {
+    updateTrackTimerDisplay();
   }
 }
 
-// Host publishes position tick twice per second
+// Dedicated seek event handler (fires immediately when any admin/super_admin scrubs)
+function onServerSeek({ positionSec, durationSec, actorName, eventId }) {
+  const pos = Number(positionSec);
+  if (!Number.isFinite(pos) || pos < 0) return;
+  if (typeof durationSec === 'number' && durationSec > 0) {
+    serverDuration = durationSec;
+  }
+  _hostSeekCooldownUntil = Date.now() + 3000;
+  _lastHostReportedSec = pos;
+
+  // Super Admin: actively playing acoustic deck — jump YouTube player only if not already near target
+  if (isSuperAdmin && player && isPlayerReady && typeof player.seekTo === 'function') {
+    const cur = (typeof player.getCurrentTime === 'function') ? (player.getCurrentTime() || 0) : 0;
+    if (Math.abs(cur - pos) > 0.5) {
+      player.seekTo(pos, true);
+    }
+    const dur = (typeof player.getDuration === 'function') ? (player.getDuration() || 0) : 0;
+    if (typeof SAS.hostTick === 'function') {
+      SAS.hostTick(pos, dur);
+    }
+  }
+  updateTrackTimerDisplay();
+
+  const evId = eventId || ('seek-' + Date.now());
+  const actor = actorName || (isSuperAdmin ? 'Super Admin' : 'Admin');
+  const seekEv = {
+    id: evId,
+    type: 'seek',
+    actorName: actor,
+    detail: 'Seeked Track',
+    at: Date.now()
+  };
+
+  // Immediate insertion into Activity Radar stream (prevent duplicates via eventId)
+  if (isAuthorizedUser()) {
+    const stream = document.getElementById('live-activity-stream');
+    if (stream && !seenEventIds.has(evId)) {
+      seenEventIds.add(evId);
+      const card = buildActivityCard(seekEv);
+      stream.insertBefore(card, stream.firstChild);
+      while (stream.children.length > 25) {
+        stream.removeChild(stream.lastChild);
+      }
+    }
+  }
+
+  // Toast popup notification for other users
+  if (actor !== getDeviceName()) {
+    showEventToast(seekEv);
+  }
+}
+
+// Host publishes position tick twice per second to all connected devices
+let _lastHostReportedSec = 0;
+let _hostSeekCooldownUntil = 0;
+
 setInterval(() => {
   if (isSuperAdmin && player && isPlayerReady && typeof player.getCurrentTime === 'function' && typeof player.getPlayerState === 'function') {
     if (player.getPlayerState() === YT.PlayerState.PLAYING) {
       const cur = player.getCurrentTime() || 0;
       const dur = (typeof player.getDuration === 'function') ? (player.getDuration() || 0) : 0;
+
+      const isCooldown = Date.now() < _hostSeekCooldownUntil;
+      // If in cooldown and player hasn't caught up to target yet, do not tick stale position
+      if (isCooldown && Math.abs(cur - _lastHostReportedSec) > 1.5) {
+        return;
+      }
+
+      _lastHostReportedSec = cur;
       SAS.hostTick(cur, dur);
     }
   }
@@ -1930,17 +2141,18 @@ document.addEventListener('visibilitychange', () => {
 
   if (isSuperAdmin) {
     setTimeout(() => {
-      if (!player || !player.getPlayerState) return;
+      if (!player || typeof player.getPlayerState !== 'function') return;
       const currentState = player.getPlayerState();
       if (expectedPlaybackState === 'playing' &&
+        SAS.state?.nowPlaying?.isPlaying &&
         currentState !== YT.PlayerState.PLAYING &&
         currentState !== YT.PlayerState.BUFFERING) {
-        player.playVideo();
+        try { player.playVideo(); } catch (_) { }
       }
     }, 400);
   } else {
     setTimeout(() => {
-      const np = SAS.state.nowPlaying;
+      const np = SAS.state?.nowPlaying;
       if (np && np.videoId) {
         applyNowPlayingToPlayer(np);
       }
@@ -2105,6 +2317,7 @@ async function boot() {
   initPiPButton();
   listenForSWUpdates();
   startTrackTimer();
+  initThumbProgressScrubber();
   applyRoleBasedVideoDisplay();
 
   const savedName = localStorage.getItem('sas_device_name') || getBrowserDeviceName();
@@ -2113,6 +2326,7 @@ async function boot() {
   // Wire SAS Realtime Engine
   SAS.on('state', applyState)
     .on('tick', onServerTick)
+    .on('seek', onServerSeek)
     .on('denied', onActionDenied)
     .on('status', onConnectionStatus);
 
@@ -2155,17 +2369,7 @@ async function boot() {
     });
   }
 
-  // Auto-recovery for Super Admin playback when tab becomes visible
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      if (isSuperAdmin && SAS.state?.nowPlaying?.isPlaying && player && typeof player.getPlayerState === 'function') {
-        const st = player.getPlayerState();
-        if (st !== YT.PlayerState.PLAYING && st !== YT.PlayerState.BUFFERING) {
-          try { player.playVideo(); } catch (_) { }
-        }
-      }
-    }
-  });
+
 
   // Legacy Firebase Invalidation & Storage Cleanup
   invalidateLegacyFirebaseVersions();
