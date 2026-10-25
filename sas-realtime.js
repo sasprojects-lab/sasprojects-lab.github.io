@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------------ *
  * SAS realtime client — Cloudflare Workers + Durable Objects engine
- * v4.3.5 — Hardened: tamper-proof closure, frozen state, no leaks
+ * v4.3.6 — Hardened: tamper-proof closure, frozen state, seek cooldown sync
  * ------------------------------------------------------------------ */
 
 const SAS = (() => {
@@ -14,6 +14,11 @@ const SAS = (() => {
   let _connectAttemptsSinceSuccess = 0;
   let _currentRole = "pending";
   let _currentStatus = "guest";
+  // Client-side seek cooldown: prevents incoming tick broadcasts from overwriting
+  // the seeked position before the host YT player has caught up (~3.5s window).
+  let _seekCooldownUntil = 0;
+  let _seekTargetPos = -1;
+  let _seekIssuedAt = 0;
 
   const _handlers = {
     state: [],
@@ -201,6 +206,10 @@ const SAS = (() => {
           const msg = JSON.parse(e.data);
           if (msg.t === "state") {
             _serverSkew = (msg.serverTime || Date.now()) - Date.now();
+            if (Date.now() < _seekCooldownUntil && _seekTargetPos >= 0 && msg.nowPlaying) {
+              msg.nowPlaying.positionSec = _seekTargetPos;
+              msg.nowPlaying.updatedAt = Date.now() + _serverSkew;
+            }
             _latest = msg;
             if (msg.you) {
               _currentRole = msg.you.role || "guest";
@@ -209,20 +218,44 @@ const SAS = (() => {
             _emit("state", msg);
           } else if (msg.t === "tick") {
             if (_latest?.nowPlaying) {
-              _latest.nowPlaying.positionSec = msg.positionSec;
-              _latest.nowPlaying.updatedAt = msg.at || Date.now();
+              // If a seek was recently issued by this client, ignore ticks that
+              // haven't caught up to the target yet (host YT player seek latency).
+              const inCooldown = Date.now() < _seekCooldownUntil;
+              const tickPos = Number(msg.positionSec);
+              if (inCooldown && _seekTargetPos >= 0) {
+                const elapsedSinceSeek = Math.max(0, (Date.now() - _seekIssuedAt) / 1000);
+                const expectedPos = _seekTargetPos + (_latest.nowPlaying.isPlaying ? elapsedSinceSeek : 0);
+                if (Math.abs(tickPos - expectedPos) > 2.0) {
+                  // Stale tick — host player hasn't reached seeked position yet, skip overwrite
+                } else {
+                  // Host player has caught up to the seek target! End cooldown and sync
+                  _seekCooldownUntil = 0;
+                  _seekTargetPos = -1;
+                  _latest.nowPlaying.positionSec = tickPos;
+                  _latest.nowPlaying.updatedAt = msg.at || Date.now();
+                }
+              } else {
+                _latest.nowPlaying.positionSec = tickPos;
+                _latest.nowPlaying.updatedAt = msg.at || Date.now();
+              }
               if (typeof msg.durationSec === "number" && msg.durationSec > 0) {
                 _latest.nowPlaying.durationSec = msg.durationSec;
               }
             }
             _emit("tick", msg);
           } else if (msg.t === "seek") {
-            if (_latest?.nowPlaying) {
-              _latest.nowPlaying.positionSec = msg.positionSec;
-              _latest.nowPlaying.updatedAt = msg.at || Date.now();
-              if (typeof msg.durationSec === "number" && msg.durationSec > 0) {
-                _latest.nowPlaying.durationSec = msg.durationSec;
+            const pos = Number(msg.positionSec);
+            if (Number.isFinite(pos) && pos >= 0) {
+              if (_latest?.nowPlaying) {
+                _latest.nowPlaying.positionSec = pos;
+                _latest.nowPlaying.updatedAt = msg.at || (Date.now() + _serverSkew);
+                if (typeof msg.durationSec === "number" && msg.durationSec > 0) {
+                  _latest.nowPlaying.durationSec = msg.durationSec;
+                }
               }
+              _seekCooldownUntil = Date.now() + 4000;
+              _seekTargetPos = pos;
+              _seekIssuedAt = Date.now();
             }
             _emit("seek", msg);
           } else if (msg.t === "denied") {
@@ -285,9 +318,16 @@ const SAS = (() => {
   };
 
   const projectedPosition = () => {
-    const np = _latest.nowPlaying;
+    const np = _latest?.nowPlaying;
     if (!np) return 0;
     if (!np.isPlaying) return np.positionSec || 0;
+    // During active seek cooldown, smoothly project directly from the seek target
+    if (Date.now() < _seekCooldownUntil && _seekTargetPos >= 0) {
+      const elapsedSinceSeek = Math.max(0, (Date.now() - _seekIssuedAt) / 1000);
+      const pos = _seekTargetPos + elapsedSinceSeek;
+      const dur = np.durationSec || 0;
+      return dur > 0 ? Math.min(pos, dur) : pos;
+    }
     const elapsedSec = (Date.now() + _serverSkew - (np.updatedAt || Date.now())) / 1000;
     return Math.max(0, (np.positionSec || 0) + (elapsedSec > 0 && elapsedSec < 7200 ? elapsedSec : 0));
   };
@@ -332,9 +372,16 @@ const SAS = (() => {
     goto: (index) => _send("goto", { index }),
     seek: (positionSec) => {
       const pos = Number(positionSec);
-      if (Number.isFinite(pos) && pos >= 0 && _latest?.nowPlaying) {
-        _latest.nowPlaying.positionSec = pos;
-        _latest.nowPlaying.updatedAt = Date.now();
+      if (Number.isFinite(pos) && pos >= 0) {
+        if (_latest?.nowPlaying) {
+          _latest.nowPlaying.positionSec = pos;
+          _latest.nowPlaying.updatedAt = Date.now() + _serverSkew;
+        }
+        // Freeze out tick-driven position overwrites for 4.0s so the seek bar
+        // stays at the seeked spot while the host YT player catches up.
+        _seekCooldownUntil = Date.now() + 4000;
+        _seekTargetPos = pos;
+        _seekIssuedAt = Date.now();
       }
       return _send("seek", { positionSec: pos });
     },

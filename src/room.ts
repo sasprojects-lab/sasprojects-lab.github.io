@@ -3,7 +3,7 @@ import type { Env } from "./index";
 /* ------------------------------------------------------------------ *
  * One Durable Object = one room = the single source of truth.
  * Clients never write state. They send intents; this object decides.
- * v4.3.5 — seek stability, no loop ticks, pause/play harmony
+ * v4.3.6 — seek stability, adaptive cooldown, dual-wing studio deck
  * ------------------------------------------------------------------ */
 
 export type Role = "super_admin" | "admin" | "guest" | "pending";

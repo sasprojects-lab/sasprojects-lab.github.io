@@ -1,7 +1,7 @@
 // =========================================================================
 //  SAS PLAYER — APP VERSION (Workers + Durable Objects Architecture)
 // =========================================================================
-const APP_VERSION = '4.3.5';
+const APP_VERSION = '4.3.6';
 
 (() => {
   'use strict';
@@ -508,8 +508,9 @@ function initThumbProgressScrubber() {
   // Helper: compute seek fraction from a pointer event relative to the track
   function pctFromEvent(e) {
     const rect = track.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return 0;
     const touch = e.touches?.[0] || e.changedTouches?.[0];
-    const clientX = touch ? touch.clientX : e.clientX;
+    const clientX = touch ? touch.clientX : (typeof e.clientX === 'number' ? e.clientX : 0);
     return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
   }
 
