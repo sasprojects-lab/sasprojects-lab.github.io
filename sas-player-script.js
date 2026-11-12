@@ -1,7 +1,7 @@
 // =========================================================================
 //  SAS PLAYER — APP VERSION (Workers + Durable Objects Architecture)
 // =========================================================================
-const APP_VERSION = '4.3.6';
+const APP_VERSION = '4.4.0';
 
 (() => {
   'use strict';
@@ -312,12 +312,36 @@ function showEventToast(ev) {
 }
 
 // Initialize YouTube Player
+let isInitializingPlayer = false;
+let pendingLocalTrackIndex = -1;
+let _trackTransitionGuardUntil = 0;
+let _ignorePauseProgrammaticUntil = 0;
+let _lastErrorSkipAt = 0;
+
 function onYouTubeIframeAPIReady() {
   ytApiReady = true;
   initYouTubePlayer();
 }
 
-let isInitializingPlayer = false;
+function ensureYouTubeAPIReady() {
+  if (ytApiReady && player) return;
+  if (window.YT && typeof window.YT.Player === 'function') {
+    ytApiReady = true;
+    initYouTubePlayer();
+    return;
+  }
+  let attempts = 0;
+  const checkTimer = setInterval(() => {
+    attempts++;
+    if (window.YT && typeof window.YT.Player === 'function') {
+      clearInterval(checkTimer);
+      ytApiReady = true;
+      initYouTubePlayer();
+    } else if (attempts >= 40) {
+      clearInterval(checkTimer);
+    }
+  }, 250);
+}
 
 function initYouTubePlayer() {
   if (!ytApiReady || player || isInitializingPlayer) return;
@@ -332,29 +356,46 @@ function initYouTubePlayer() {
   const initialVideoId = (videoLinks[currentIndex] ? videoLinks[currentIndex].id : 'byitAI7kkOM');
 
   try {
+    const playerVars = {
+      'autoplay': 0,
+      'mute': 0,
+      'controls': 0,
+      'rel': 0,
+      'playsinline': 1,
+      'enablejsapi': 1,
+      'disablekb': 1,
+      'iv_load_policy': 3,
+      'modestbranding': 1
+    };
+    if (window.location && /^https?:$/i.test(window.location.protocol)) {
+      playerVars.origin = window.location.origin;
+    }
+
     player = new YT.Player('yt-iframe', {
       height: '100%',
       width: '100%',
       videoId: initialVideoId,
-      playerVars: {
-        'autoplay': 0,
-        'mute': 0,
-        'controls': 0,
-        'rel': 0,
-        'playsinline': 1,
-        'enablejsapi': 1,
-        'disablekb': 1,
-        'iv_load_policy': 3,
-        'modestbranding': 1
-      },
+      playerVars,
       events: {
         'onReady': (e) => {
           isInitializingPlayer = false;
           onPlayerReady(e);
         },
         'onStateChange': onPlayerStateChange,
-        'onError': (e) => {
+        'onError': () => {
           isInitializingPlayer = false;
+          // Avoid getting stuck on an unplayable/unavailable video in a queue or playlist
+          if (isPlayerReady && videoLinks.length > 1 && (Date.now() - _lastErrorSkipAt > 2500)) {
+            if (isSuperAdmin && SAS.state?.nowPlaying?.isPlaying) {
+              _lastErrorSkipAt = Date.now();
+              _trackTransitionGuardUntil = Date.now() + 4000;
+              SAS.next();
+            } else if (!isAuthorizedUser() && expectedPlaybackState === 'playing') {
+              _lastErrorSkipAt = Date.now();
+              _trackTransitionGuardUntil = Date.now() + 3500;
+              playNext();
+            }
+          }
         }
       }
     });
@@ -381,25 +422,63 @@ function onPlayerReady() {
       applyNowPlayingToPlayer(SAS.state.nowPlaying);
     }
   } else if (!isAuthorizedUser()) {
-    // Guest: ready up first track title
-    if (videoLinks[currentIndex]) {
+    // If Guest clicked a track before the iframe finished initializing, play it now
+    if (pendingLocalTrackIndex >= 0 && pendingLocalTrackIndex < videoLinks.length) {
+      const idx = pendingLocalTrackIndex;
+      pendingLocalTrackIndex = -1;
+      loadLocalVideo(idx);
+    } else if (videoLinks[currentIndex]) {
       updateDisplayTitle(videoLinks[currentIndex].title);
     }
   }
 }
 
+function isNearTrackEnd() {
+  if (!player || typeof player.getDuration !== 'function' || typeof player.getCurrentTime !== 'function') {
+    return false;
+  }
+  const dur = player.getDuration() || 0;
+  const cur = player.getCurrentTime() || 0;
+  return dur > 0 && cur >= dur - 2.0;
+}
+
 function onPlayerStateChange(event) {
-  const isPlaying = (event.data === YT.PlayerState.PLAYING);
+  const state = event.data;
+  const isPlaying = (state === YT.PlayerState.PLAYING);
 
   // Synchronize Super Admin host player state with the room and UI
   if (isSuperAdmin) {
     if (isPlaying) {
+      _trackTransitionGuardUntil = 0;
       expectedPlaybackState = 'playing';
       if (SAS.state?.nowPlaying && !SAS.state.nowPlaying.isPlaying) {
         SAS.play();
       }
       updatePlaybackUIState(true);
-    } else if (event.data === YT.PlayerState.PAUSED) {
+    } else if (state === YT.PlayerState.CUED) {
+      // If a track was loaded while room expects playback, kick off playback automatically
+      if (SAS.state?.nowPlaying?.isPlaying || expectedPlaybackState === 'playing') {
+        _trackTransitionGuardUntil = Date.now() + 2500;
+        try { player.playVideo(); } catch (_) { }
+      }
+    } else if (state === YT.PlayerState.PAUSED) {
+      // Ignore transient PAUSED events fired by YouTube during track switches, programmatic pauses, or right before ENDED
+      if (Date.now() < _trackTransitionGuardUntil) {
+        return;
+      }
+      if (Date.now() < _ignorePauseProgrammaticUntil) {
+        updatePlaybackUIState(false);
+        return;
+      }
+      if (isNearTrackEnd()) {
+        return;
+      }
+      const playerVid = (typeof player.getVideoData === 'function') ? (player.getVideoData()?.video_id || '') : '';
+      const serverVid = SAS.state?.nowPlaying?.videoId || '';
+      if (playerVid && serverVid && playerVid !== serverVid) {
+        return;
+      }
+
       expectedPlaybackState = 'paused';
       if (SAS.state?.nowPlaying?.isPlaying) {
         // Host player was paused locally (e.g. user clicked native YouTube pause)
@@ -407,10 +486,28 @@ function onPlayerStateChange(event) {
       }
       updatePlaybackUIState(false);
     }
+  } else if (!isAuthorizedUser()) {
+    // Guest standalone playback state sync
+    if (isPlaying) {
+      _trackTransitionGuardUntil = 0;
+      expectedPlaybackState = 'playing';
+      updatePlaybackUIState(true);
+    } else if (state === YT.PlayerState.CUED) {
+      if (expectedPlaybackState === 'playing') {
+        _trackTransitionGuardUntil = Date.now() + 2500;
+        try { player.playVideo(); } catch (_) { }
+      }
+    } else if (state === YT.PlayerState.PAUSED) {
+      if (Date.now() < _trackTransitionGuardUntil || isNearTrackEnd()) {
+        return;
+      }
+      expectedPlaybackState = 'paused';
+      updatePlaybackUIState(false);
+    }
   }
 
   // Broadcast duration to all other devices on playback start/buffer
-  if (isSuperAdmin && (isPlaying || event.data === YT.PlayerState.BUFFERING)) {
+  if (isSuperAdmin && (isPlaying || state === YT.PlayerState.BUFFERING)) {
     if (player && typeof player.getDuration === 'function') {
       const dur = player.getDuration() || 0;
       if (dur > 0) {
@@ -420,10 +517,14 @@ function onPlayerStateChange(event) {
   }
 
   // If host player finishes playing a track, advance the entire room
-  if (isSuperAdmin && event.data === YT.PlayerState.ENDED) {
+  if (isSuperAdmin && state === YT.PlayerState.ENDED) {
+    _trackTransitionGuardUntil = Date.now() + 4000;
+    expectedPlaybackState = 'playing';
     SAS.next();
-  } else if (!isAuthorizedUser() && event.data === YT.PlayerState.ENDED) {
+  } else if (!isAuthorizedUser() && state === YT.PlayerState.ENDED) {
     // Guest player advances locally
+    _trackTransitionGuardUntil = Date.now() + 3500;
+    expectedPlaybackState = 'playing';
     playNext();
   }
 }
@@ -762,7 +863,7 @@ async function fetchVideoTitle(videoId) {
   if (titleCache[videoId]) return titleCache[videoId];
   try {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timeoutId = controller ? setTimeout(() => controller.abort(), 2000) : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), 5000) : null;
     const response = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`, {
       signal: controller ? controller.signal : undefined
     });
@@ -777,18 +878,35 @@ async function fetchVideoTitle(videoId) {
   }
 }
 
+let _isHydratingTitles = false;
 async function hydrateVideoTitles() {
+  if (_isHydratingTitles) return;
+  _isHydratingTitles = true;
   let changed = false;
-  const tasks = videoLinks.map(async (track, index) => {
-    if (!track || (track.title && track.title !== 'YouTube Track' && track.title !== 'Untitled')) return;
-    const title = await fetchVideoTitle(track.id);
-    if (title && videoLinks[index] && videoLinks[index].id === track.id) {
-      videoLinks[index].title = title;
-      changed = true;
-    }
-  });
 
-  await Promise.all(tasks);
+  try {
+    const pending = [];
+    videoLinks.forEach((track, index) => {
+      if (track && (!track.title || track.title === 'YouTube Track' || track.title === 'Untitled')) {
+        pending.push({ id: track.id, index });
+      }
+    });
+
+    const BATCH_SIZE = 8;
+    for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+      const slice = pending.slice(i, i + BATCH_SIZE);
+      await Promise.all(slice.map(async ({ id, index }) => {
+        const title = await fetchVideoTitle(id);
+        if (title && videoLinks[index] && videoLinks[index].id === id) {
+          videoLinks[index].title = title;
+          changed = true;
+        }
+      }));
+    }
+  } finally {
+    _isHydratingTitles = false;
+  }
+
   if (changed) {
     initPlaylist();
     updatePlaylistUI();
@@ -847,13 +965,28 @@ function createTrackItem(link, index, isActive) {
 
 // Local helper functions for standalone Guest player
 function toggleLocalPlayback() {
-  if (!player || typeof player.getPlayerState !== 'function') return;
+  if (!player || !isPlayerReady || typeof player.getPlayerState !== 'function') {
+    ensureYouTubeAPIReady();
+    if (videoLinks[currentIndex]) {
+      pendingLocalTrackIndex = currentIndex;
+      expectedPlaybackState = 'playing';
+      updatePlaybackUIState(true, videoLinks[currentIndex].title, currentIndex);
+    }
+    return;
+  }
   const state = player.getPlayerState();
-  const isCurrentlyPlaying = (state === YT.PlayerState.PLAYING);
+  const isCurrentlyPlaying = (state === YT.PlayerState.PLAYING || state === YT.PlayerState.BUFFERING);
   if (isCurrentlyPlaying) {
+    expectedPlaybackState = 'paused';
+    _ignorePauseProgrammaticUntil = Date.now() + 1200;
     player.pauseVideo();
     updatePlaybackUIState(false);
   } else {
+    expectedPlaybackState = 'playing';
+    _trackTransitionGuardUntil = Date.now() + 2500;
+    if (state === YT.PlayerState.ENDED) {
+      player.seekTo(0, true);
+    }
     player.playVideo();
     updatePlaybackUIState(true);
   }
@@ -865,8 +998,14 @@ function loadLocalVideo(index) {
   const track = videoLinks[index];
   if (!track) return;
   lastLoadedVideoId = track.id;
-  if (player && typeof player.loadVideoById === 'function') {
+  expectedPlaybackState = 'playing';
+  _trackTransitionGuardUntil = Date.now() + 3500;
+  if (player && isPlayerReady && typeof player.loadVideoById === 'function') {
+    pendingLocalTrackIndex = -1;
     player.loadVideoById({ videoId: track.id, startSeconds: 0 });
+  } else {
+    pendingLocalTrackIndex = index;
+    ensureYouTubeAPIReady();
   }
   updatePlaybackUIState(true, track.title, index);
 }
@@ -900,13 +1039,15 @@ function toggleMainPlayback() {
 
   if (isActuallyPlaying) {
     expectedPlaybackState = 'paused';
+    _ignorePauseProgrammaticUntil = Date.now() + 1500;
     if (isSuperAdmin && player && typeof player.pauseVideo === 'function') {
       try { player.pauseVideo(); } catch (_) { }
     }
     SAS.pause();
   } else {
     expectedPlaybackState = 'playing';
-    if (isSuperAdmin && player && typeof player.playVideo === 'function') {
+    _trackTransitionGuardUntil = Date.now() + 2500;
+    if (isSuperAdmin && player && isPlayerReady && typeof player.playVideo === 'function') {
       try { player.playVideo(); } catch (_) { }
     }
     SAS.play();
@@ -920,6 +1061,8 @@ function playNext() {
     loadLocalVideo(nextIdx);
     return;
   }
+  _trackTransitionGuardUntil = Date.now() + 3500;
+  expectedPlaybackState = 'playing';
   SAS.next();
 }
 
@@ -930,6 +1073,8 @@ function playPrev() {
     loadLocalVideo(prevIdx);
     return;
   }
+  _trackTransitionGuardUntil = Date.now() + 3500;
+  expectedPlaybackState = 'playing';
   SAS.prev();
 }
 
@@ -938,6 +1083,8 @@ function loadVideo(index) {
     loadLocalVideo(index);
     return;
   }
+  _trackTransitionGuardUntil = Date.now() + 3500;
+  expectedPlaybackState = 'playing';
   SAS.goto(index);
 }
 
@@ -1126,6 +1273,158 @@ function extractVideoID(url) {
   return match ? match[1] : null;
 }
 
+function extractPlaylistID(text) {
+  if (!text) return null;
+  // Match ?list=PLAYLIST_ID or &list=PLAYLIST_ID
+  const match = text.match(/[?&]list=([A-Za-z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
+async function fetchPlaylistViaYTPlayer(playlistId) {
+  if (!(window.YT && typeof window.YT.Player === 'function')) {
+    for (let i = 0; i < 20; i++) {
+      await wait(200);
+      if (window.YT && typeof window.YT.Player === 'function') break;
+    }
+  }
+  if (!(window.YT && typeof window.YT.Player === 'function')) return [];
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let tempPlayer = null;
+    let pollTimer = null;
+    let timeoutTimer = null;
+    let cueRequested = false;
+
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;';
+    const mount = document.createElement('div');
+    host.appendChild(mount);
+    document.body.appendChild(host);
+
+    const cleanup = () => {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      if (timeoutTimer) { clearTimeout(timeoutTimer); timeoutTimer = null; }
+      if (tempPlayer && typeof tempPlayer.destroy === 'function') {
+        try { tempPlayer.destroy(); } catch (_) { }
+      }
+      tempPlayer = null;
+      if (host.parentNode) {
+        try { host.parentNode.removeChild(host); } catch (_) { }
+      }
+    };
+
+    const finish = (ids) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(Array.isArray(ids) ? ids : []);
+    };
+
+    const checkList = () => {
+      if (settled || !tempPlayer || typeof tempPlayer.getPlaylist !== 'function') return false;
+      try {
+        const list = tempPlayer.getPlaylist();
+        if (Array.isArray(list) && list.length > 0) {
+          const seen = new Set();
+          const valid = [];
+          for (const id of list) {
+            if (typeof id === 'string' && /^[A-Za-z0-9_-]{11}$/.test(id) && !seen.has(id)) {
+              seen.add(id);
+              valid.push(id);
+            }
+          }
+          if (valid.length > 0) {
+            finish(valid);
+            return true;
+          }
+        }
+      } catch (_) { }
+      return false;
+    };
+
+    timeoutTimer = setTimeout(() => {
+      if (!checkList()) finish([]);
+    }, 10000);
+
+    try {
+      const pVars = {
+        listType: 'playlist',
+        list: playlistId,
+        autoplay: 0,
+        mute: 1,
+        controls: 0
+      };
+      if (window.location && /^https?:$/i.test(window.location.protocol)) {
+        pVars.origin = window.location.origin;
+      }
+
+      tempPlayer = new YT.Player(mount, {
+        height: '1',
+        width: '1',
+        playerVars: pVars,
+        events: {
+          onReady: (e) => {
+            try { if (typeof e.target.mute === 'function') e.target.mute(); } catch (_) { }
+            if (checkList()) return;
+            if (!cueRequested && typeof e.target.cuePlaylist === 'function') {
+              cueRequested = true;
+              try { e.target.cuePlaylist({ listType: 'playlist', list: playlistId }); } catch (_) { }
+            }
+            if (!pollTimer) pollTimer = setInterval(checkList, 150);
+          },
+          onStateChange: () => {
+            checkList();
+          },
+          onError: () => {
+            if (!checkList()) {
+              setTimeout(() => {
+                if (!checkList()) finish([]);
+              }, 800);
+            }
+          }
+        }
+      });
+    } catch (_) {
+      finish([]);
+    }
+  });
+}
+
+async function fetchPlaylistViaWorker(playlistId) {
+  try {
+    if (!SAS || typeof SAS.getWorkerApi !== 'function') return [];
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), 8000) : null;
+    const res = await fetch(
+      `${SAS.getWorkerApi()}/api/playlist?list=${encodeURIComponent(playlistId)}`,
+      { signal: controller ? controller.signal : undefined }
+    );
+    if (timeoutId) clearTimeout(timeoutId);
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (Array.isArray(data?.videoIds)) {
+      return data.videoIds.filter((id) => typeof id === 'string' && /^[A-Za-z0-9_-]{11}$/.test(id));
+    }
+    return [];
+  } catch (_) {
+    return [];
+  }
+}
+
+async function fetchPlaylistVideoIDs(playlistId) {
+  if (!playlistId) return [];
+  // Primary: official YouTube IFrame API (works client-side without CORS)
+  const ytIds = await fetchPlaylistViaYTPlayer(playlistId);
+  if (ytIds.length > 0) return ytIds;
+
+  // Fallback: Worker /api/playlist proxy if deployed
+  const workerIds = await fetchPlaylistViaWorker(playlistId);
+  if (workerIds.length > 0) return workerIds;
+
+  return [];
+}
+
 function extractAllVideoIDs(text) {
   if (!text) return [];
   const ids = [];
@@ -1167,16 +1466,89 @@ async function addLink() {
   if (!raw) return;
   input.value = '';
 
-  // Delegate to insertTrack which handles single or multiple URLs
+  // Delegate to insertTrack which handles single URLs, multiple URLs, and playlists
   await insertTrack(raw);
 }
 
 async function insertTrack(rawInput) {
   if (!rawInput) return;
+
+  // Check if input contains a YouTube playlist link
+  const playlistId = extractPlaylistID(rawInput);
+  if (playlistId) {
+    // Also extract any single video ID from the same URL (e.g. watch?v=XXX&list=YYY)
+    const singleVideoId = extractVideoID(rawInput);
+
+    // Show loading feedback
+    const linkInput = document.getElementById('link-input');
+    const remoteLinkInput = document.getElementById('remote-link-input');
+    const origPlaceholder = linkInput ? linkInput.placeholder : '';
+    const origRemotePlaceholder = remoteLinkInput ? remoteLinkInput.placeholder : '';
+    if (linkInput) linkInput.placeholder = 'Loading playlist tracks...';
+    if (remoteLinkInput) remoteLinkInput.placeholder = 'Loading playlist tracks...';
+
+    const playlistVideoIDs = await fetchPlaylistVideoIDs(playlistId);
+
+    // Restore placeholders
+    if (linkInput) linkInput.placeholder = origPlaceholder;
+    if (remoteLinkInput) remoteLinkInput.placeholder = origRemotePlaceholder;
+
+    if (playlistVideoIDs.length > 0) {
+      // Use playlist tracks
+      if (isAuthorizedUser() && typeof SAS.addTracks === 'function') {
+        const batch = playlistVideoIDs.map(id => ({
+          videoId: id,
+          title: titleCache[id] || "YouTube Track"
+        }));
+        SAS.addTracks(batch);
+      } else if (!isAuthorizedUser()) {
+        const wasEmpty = videoLinks.length === 0;
+        for (const videoId of playlistVideoIDs) {
+          videoLinks.push({
+            id: videoId,
+            title: titleCache[videoId] || "YouTube Track",
+            addedByName: 'You (Guest)',
+            isPinned: false,
+          });
+        }
+        initPlaylist();
+        updatePlaylistUI();
+        if (wasEmpty || currentIndex === -1) {
+          loadLocalVideo(0);
+        }
+        hydrateVideoTitles();
+      } else {
+        for (const videoId of playlistVideoIDs) {
+          const title = await fetchVideoTitle(videoId);
+          const trackTitle = title || "YouTube Track";
+          SAS.addTrack(videoId, trackTitle);
+          if (playlistVideoIDs.length > 1) await wait(80);
+        }
+      }
+      return;
+    }
+
+    // Playlist fetch failed — fall back to single video ID if present
+    if (singleVideoId) {
+      const title = await fetchVideoTitle(singleVideoId);
+      const trackTitle = title || "YouTube Track";
+      if (!isAuthorizedUser()) {
+        addLocalTrack(singleVideoId, trackTitle);
+      } else {
+        SAS.addTrack(singleVideoId, trackTitle);
+      }
+      return;
+    }
+
+    alert("Could not load playlist. Please check the link and try again.");
+    return;
+  }
+
+  // Not a playlist — extract individual video IDs
   const validTracks = extractAllVideoIDs(rawInput);
 
   if (validTracks.length === 0) {
-    alert("No valid YouTube video URLs found.");
+    alert("No valid YouTube video or playlist URLs found.");
     return;
   }
 
@@ -1228,9 +1600,16 @@ function applyNowPlayingToPlayer(np) {
 
   if (!player || !isPlayerReady) return;
 
+  expectedPlaybackState = np.isPlaying ? 'playing' : 'paused';
+
+  // Super Admin always unmuted
+  if (typeof player.unMute === 'function') player.unMute();
+
   // Video track change
-  if (np.videoId !== lastLoadedVideoId) {
+  const trackChanged = (np.videoId !== lastLoadedVideoId);
+  if (trackChanged) {
     lastLoadedVideoId = np.videoId;
+    _trackTransitionGuardUntil = Date.now() + 3500;
     const startSec = Math.floor(SAS.projectedPosition());
     if (np.isPlaying) {
       player.loadVideoById({
@@ -1238,22 +1617,27 @@ function applyNowPlayingToPlayer(np) {
         startSeconds: startSec
       });
     } else {
+      _ignorePauseProgrammaticUntil = Date.now() + 1500;
       player.cueVideoById({
         videoId: np.videoId,
         startSeconds: startSec
       });
     }
-  }
-
-  // Super Admin always unmuted
-  if (typeof player.unMute === 'function') player.unMute();
-
-  // Play / Pause alignment
-  if (typeof player.getPlayerState === 'function') {
+  } else if (typeof player.getPlayerState === 'function') {
+    // Play / Pause alignment only when staying on the same track
+    // (skip right after loadVideoById/cueVideoById so we don't interrupt YouTube's async load)
     const currentState = player.getPlayerState();
-    if (np.isPlaying && currentState !== YT.PlayerState.PLAYING && currentState !== YT.PlayerState.BUFFERING) {
-      player.playVideo();
+    if (np.isPlaying) {
+      if (currentState === YT.PlayerState.ENDED) {
+        _trackTransitionGuardUntil = Date.now() + 3000;
+        if (typeof player.seekTo === 'function') player.seekTo(0, true);
+        player.playVideo();
+      } else if (currentState !== YT.PlayerState.PLAYING && currentState !== YT.PlayerState.BUFFERING) {
+        _trackTransitionGuardUntil = Date.now() + 2500;
+        player.playVideo();
+      }
     } else if (!np.isPlaying && (currentState === YT.PlayerState.PLAYING || currentState === YT.PlayerState.BUFFERING)) {
+      _ignorePauseProgrammaticUntil = Date.now() + 1500;
       player.pauseVideo();
     }
   }
@@ -1552,26 +1936,17 @@ function isAuthorizedUser() {
   return isSuperAdmin || (isAdmin && currentUserRole === 'admin' && deviceStatus !== 'revoked');
 }
 
-function getBrowserDeviceName() {
-  const ua = navigator.userAgent;
-  let browser = 'Browser';
-  if (ua.includes('Brave')) browser = 'Brave';
-  else if (ua.includes('Edg')) browser = 'Edge';
-  else if (ua.includes('Chrome')) browser = 'Chrome';
-  else if (ua.includes('Firefox')) browser = 'Firefox';
-  else if (ua.includes('Safari')) browser = 'Safari';
-
-  let os = 'PC';
-  if (/Android/i.test(ua)) os = 'Android';
-  else if (/iPhone|iPad/i.test(ua)) os = 'iOS';
-  else if (/Mac/i.test(ua)) os = 'Mac';
-  else if (/Win/i.test(ua)) os = 'Windows';
-
-  return `${browser} - ${os}`;
+function isAutoGeneratedBrowserName(name) {
+  const n = String(name || '').trim();
+  if (!n) return false;
+  return /^(Browser|Brave|Edge|Chrome|Firefox|Safari)\s*-\s*(PC|Android|iOS|Mac|Windows)$/i.test(n) || /^Guest Device$/i.test(n);
 }
 
 function getDeviceName() {
-  return localStorage.getItem('sas_device_name') || getBrowserDeviceName();
+  const saved = localStorage.getItem('sas_device_name') || '';
+  if (saved && !isAutoGeneratedBrowserName(saved)) return saved;
+  const serverName = SAS.state?.you?.name || '';
+  return isAutoGeneratedBrowserName(serverName) ? '' : serverName;
 }
 
 function renderAdminDeviceList(devices) {
@@ -1890,7 +2265,9 @@ function openAccessModal() {
   const pendingNameEl = document.getElementById('access-modal-pending-name');
   const revokedNameEl = document.getElementById('access-modal-revoked-name');
 
-  const currentName = SAS.state.self?.name || localStorage.getItem('sas_device_name') || getDeviceName();
+  const rawSaved = localStorage.getItem('sas_device_name') || '';
+  const cleanSaved = isAutoGeneratedBrowserName(rawSaved) ? '' : rawSaved;
+  const currentName = cleanSaved || SAS.state?.you?.name || 'Unnamed';
 
   if (isRevoked) {
     if (requestView) requestView.classList.add('hidden');
@@ -1906,6 +2283,13 @@ function openAccessModal() {
     if (approvedView) approvedView.classList.remove('hidden');
     if (footer) footer.classList.add('hidden');
     if (approvedNameEl) approvedNameEl.textContent = currentName;
+    const rolePill = document.getElementById('access-modal-role-pill');
+    if (rolePill) {
+      rolePill.className = `device-role-pill ${isSuperAdmin ? 'super-admin' : 'admin'}`;
+      rolePill.innerHTML = isSuperAdmin
+        ? '<i class="fas fa-crown"></i> Super Admin'
+        : '<i class="fas fa-shield-alt"></i> Approved Admin';
+    }
   } else if (isPending) {
     if (requestView) requestView.classList.add('hidden');
     if (approvedView) approvedView.classList.add('hidden');
@@ -1921,7 +2305,7 @@ function openAccessModal() {
     if (revokedView) revokedView.classList.add('hidden');
     if (footer) footer.classList.remove('hidden');
     const input = document.getElementById('device-name-input');
-    if (input) input.value = localStorage.getItem('sas_device_name') || '';
+    if (input) input.value = cleanSaved;
   }
 
   document.getElementById('access-request-overlay')?.classList.remove('hidden');
@@ -1958,13 +2342,54 @@ async function requestAccess() {
   }
 }
 
+async function changeMyDisplayName() {
+  const rawSaved = localStorage.getItem('sas_device_name') || '';
+  const current = isAutoGeneratedBrowserName(rawSaved) ? '' : (rawSaved || SAS.state?.you?.name || '');
+  const entered = prompt('Enter your display name:', current);
+  if (entered === null) return;
+  const finalName = entered.trim();
+  if (!finalName) {
+    alert('Please enter a valid display name.');
+    return;
+  }
+  localStorage.setItem('sas_device_name', finalName);
+  try {
+    await SAS.ensureSession(finalName);
+    SAS.disconnect();
+    SAS.connect();
+  } catch (_) { }
+  const approvedNameEl = document.getElementById('access-modal-user-name');
+  if (approvedNameEl) approvedNameEl.textContent = finalName;
+}
+
 async function promptAdminPassphrase() {
-  const entered = prompt('Enter Super Admin Passphrase:');
+  const entered = prompt('Enter Access Passphrase:');
   if (!entered) return;
 
   try {
     const res = await SAS.elevate(entered.trim());
     if (res.ok) {
+      // Always let Super Admin / Admin set their own name — never assume a browser/device name
+      const rawSaved = localStorage.getItem('sas_device_name') || '';
+      const prefill = isAutoGeneratedBrowserName(rawSaved) ? '' : rawSaved;
+      let finalName = '';
+      while (!finalName) {
+        const nameInput = prompt('Set your display name for this session:', prefill);
+        if (nameInput === null) break;
+        const cleaned = nameInput.trim();
+        if (cleaned) {
+          finalName = cleaned;
+        } else {
+          alert('Please enter a valid display name.');
+        }
+      }
+      if (finalName) {
+        localStorage.setItem('sas_device_name', finalName);
+        try { await SAS.ensureSession(finalName); } catch (_) { }
+        // Reconnect WebSocket with refreshed token so DO immediately updates fleet & activity name
+        SAS.disconnect();
+        SAS.connect();
+      }
       applyElevationResult(res.role);
     } else {
       alert(res.error ? `Authentication failed (${res.error}). Please check your passphrase.` : 'Invalid Passphrase.');
@@ -2311,6 +2736,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // App Boot Orchestration
 async function boot() {
+  ensureYouTubeAPIReady();
   initPlaylist();
   updateControlAccessUI();
   bindRemoteEvents();
@@ -2321,8 +2747,11 @@ async function boot() {
   initThumbProgressScrubber();
   applyRoleBasedVideoDisplay();
 
-  const savedName = localStorage.getItem('sas_device_name') || getBrowserDeviceName();
-  localStorage.setItem('sas_device_name', savedName);
+  const rawSavedName = localStorage.getItem('sas_device_name') || '';
+  if (isAutoGeneratedBrowserName(rawSavedName)) {
+    localStorage.removeItem('sas_device_name');
+  }
+  const savedName = isAutoGeneratedBrowserName(rawSavedName) ? '' : rawSavedName;
 
   // Wire SAS Realtime Engine
   SAS.on('state', applyState)
@@ -2332,7 +2761,7 @@ async function boot() {
     .on('status', onConnectionStatus);
 
   try {
-    await SAS.ensureSession(savedName);
+    await SAS.ensureSession(savedName || null);
   } catch (_) {
     // Session prefetch is best-effort — silently continue
   }
@@ -2433,6 +2862,7 @@ window.addEventListener('load', boot);
     minimizeRemotePanel,
     clearAllOtherDevices,
     logoutAdmin,
+    changeMyDisplayName,
     onYouTubeIframeAPIReady,
   });
 

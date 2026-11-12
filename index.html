@@ -16,7 +16,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="sas-player-styles.css?v=4.3.6">
+  <link rel="stylesheet" href="sas-player-styles.css?v=4.4.0">
 </head>
 
 <body>
@@ -38,7 +38,7 @@
         <span class="status-pulse-dot"></span>
         <span id="telemetry-status-text">DO: Connecting...</span>
       </div>
-      <span class="app-version-badge" id="app-version-badge" title="App Version">v4.3.6</span>
+      <span class="app-version-badge" id="app-version-badge" title="App Version">v4.4.0</span>
     </div>
 
     <!-- Center Search & Command Input -->
@@ -331,7 +331,7 @@
         <input type="range" id="remote-volume-slider" min="0" max="100" value="100" title="Volume">
       </div>
       <div class="remote-add-group">
-        <input type="text" id="remote-link-input" placeholder="Add YouTube link remotely...">
+        <input type="text" id="remote-link-input" placeholder="Add YouTube link or playlist...">
         <button id="remote-add-btn" title="Add track"><i class="fas fa-plus"></i></button>
       </div>
     </div>
@@ -354,7 +354,7 @@
           </div>
         </div>
 
-        <!-- Approved Admin View (After Approval: shows only device name, no buttons) -->
+        <!-- Approved Admin View (After Approval: shows device name and option to change it) -->
         <div id="access-modal-approved-view" class="hidden" style="text-align: center; padding: 18px 8px 8px 8px;">
           <div
             style="width: 52px; height: 52px; border-radius: 50%; background: rgba(0, 242, 254, 0.12); border: 2px solid var(--accent-cyan); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px;">
@@ -365,9 +365,12 @@
             Connected As</div>
           <div id="access-modal-user-name"
             style="font-size: 20px; font-weight: 800; color: var(--text-main); margin-bottom: 10px;"></div>
-          <div>
-            <span class="device-role-pill admin" style="font-size: 11px; padding: 3px 10px; border-radius: 6px;"><i
+          <div style="display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap;">
+            <span class="device-role-pill admin" id="access-modal-role-pill" style="font-size: 11px; padding: 3px 10px; border-radius: 6px;"><i
                 class="fas fa-shield-alt"></i> Approved Admin</span>
+            <button type="button" onclick="changeMyDisplayName()" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18); color: var(--text-main); font-size: 11px; padding: 3px 10px; border-radius: 6px; cursor: pointer;">
+              <i class="fas fa-pen"></i> Change Name
+            </button>
           </div>
         </div>
 
@@ -467,9 +470,9 @@
     </div>
   </div>
 
+  <script src="sas-realtime.min.js?v=4.4.0"></script>
+  <script src="sas-player-script.min.js?v=4.4.0"></script>
   <script src="https://www.youtube.com/iframe_api"></script>
-  <script src="sas-realtime.min.js?v=4.3.6"></script>
-  <script src="sas-player-script.min.js?v=4.3.6"></script>
 </body>
 
 </html>

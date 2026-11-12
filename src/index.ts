@@ -143,6 +143,48 @@ export default {
       return json({ error: "origin_not_allowed" }, { status: 403, headers: cors });
     }
 
+    /* --- Public YouTube playlist ID resolver (server-side, no CORS) --- */
+    if (url.pathname === "/api/playlist" && request.method === "GET") {
+      const listId = (url.searchParams.get("list") ?? "").trim();
+      if (!/^[A-Za-z0-9_-]{2,100}$/.test(listId)) {
+        return json({ error: "invalid_playlist_id", videoIds: [] }, { status: 400, headers: cors });
+      }
+      try {
+        const ytRes = await fetch(`https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+          },
+        });
+        if (!ytRes.ok) {
+          return json({ playlistId: listId, videoIds: [] }, { status: 502, headers: cors });
+        }
+        const html = await ytRes.text();
+        const seen = new Set<string>();
+        const videoIds: string[] = [];
+        const re = /"watchEndpoint"\s*:\s*\{\s*"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"\s*,\s*"playlistId"\s*:/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(html)) !== null) {
+          if (!seen.has(m[1])) {
+            seen.add(m[1]);
+            videoIds.push(m[1]);
+          }
+        }
+        if (videoIds.length === 0) {
+          const fallbackRe = /"videoId"\s*:\s*"([A-Za-z0-9_-]{11})"/g;
+          while ((m = fallbackRe.exec(html)) !== null) {
+            if (!seen.has(m[1])) {
+              seen.add(m[1]);
+              videoIds.push(m[1]);
+            }
+          }
+        }
+        return json({ playlistId: listId, videoIds }, { headers: cors });
+      } catch {
+        return json({ playlistId: listId, videoIds: [] }, { status: 502, headers: cors });
+      }
+    }
+
     const raw = bearerToken(request);
     const secret = env.TOKEN_SECRET || "sas_default_insecure_dev_secret_replace_me";
     const identity = raw ? await verifyToken(raw, secret) : null;

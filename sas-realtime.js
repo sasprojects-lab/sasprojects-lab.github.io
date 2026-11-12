@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------------ *
  * SAS realtime client — Cloudflare Workers + Durable Objects engine
- * v4.3.6 — Hardened: tamper-proof closure, frozen state, seek cooldown sync
+ * v4.4.0 — Hardened: tamper-proof closure, frozen state, seek cooldown sync
  * ------------------------------------------------------------------ */
 
 const SAS = (() => {
@@ -19,6 +19,7 @@ const SAS = (() => {
   let _seekCooldownUntil = 0;
   let _seekTargetPos = -1;
   let _seekIssuedAt = 0;
+  const _pendingOutbox = [];
 
   const _handlers = {
     state: [],
@@ -199,6 +200,14 @@ const SAS = (() => {
         _connectAttemptsSinceSuccess = 0;
         _startHeartbeat();
         _emit("status", "connected");
+        // Flush any recent user intents queued while socket was connecting
+        const now = Date.now();
+        while (_pendingOutbox.length > 0) {
+          const item = _pendingOutbox.shift();
+          if (item && (now - item.at < 8000) && _ws && _ws.readyState === WebSocket.OPEN) {
+            try { _ws.send(item.raw); } catch (_) { }
+          }
+        }
       };
 
       _ws.onmessage = (e) => {
@@ -310,9 +319,15 @@ const SAS = (() => {
   }
 
   const _send = (t, payload = {}) => {
+    const raw = JSON.stringify({ t, ...payload });
     if (_ws && _ws.readyState === WebSocket.OPEN) {
-      _ws.send(JSON.stringify({ t, ...payload }));
+      _ws.send(raw);
       return true;
+    }
+    // Queue user intents briefly if WebSocket is still connecting (e.g. right after refresh)
+    if (t !== "ping" && t !== "tick") {
+      if (_pendingOutbox.length >= 20) _pendingOutbox.shift();
+      _pendingOutbox.push({ raw, at: Date.now() });
     }
     return false;
   };

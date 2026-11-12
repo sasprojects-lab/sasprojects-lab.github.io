@@ -1,8 +1,8 @@
-// SAS Player Service Worker v4.3.6
+// SAS Player Service Worker v4.4.0
 // Network-first for app shell, cache fallback for offline resilience
 // Forces immediate activation and notifies clients on update
 
-const CACHE_NAME = 'sas-player-v4.3.6';
+const CACHE_NAME = 'sas-player-v4.4.0';
 const SHELL_ASSETS = [
   './index.html',
   './sas-player-styles.css',
